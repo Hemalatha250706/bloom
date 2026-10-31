@@ -234,6 +234,10 @@ export default function AuthPage({ onLoginSuccess }) {
       setErrorMessage('Please enter a username.');
       return;
     }
+    if (cleanUsername.length < 3) {
+      setErrorMessage('Username must be at least 3 characters long.');
+      return;
+    }
     if (!signupEmail.trim() || !signupEmail.includes('@')) {
       setErrorMessage('Please enter a valid email address.');
       return;
@@ -248,6 +252,19 @@ export default function AuthPage({ onLoginSuccess }) {
     }
 
     setIsLoading(true);
+
+    // Enforce unique username check (case-insensitive)
+    try {
+      const availability = await authService.checkUsernameAvailability(cleanUsername);
+      if (!availability.available) {
+        setIsLoading(false);
+        setErrorMessage(availability.error || `Username "@${cleanUsername}" is already taken.`);
+        return;
+      }
+    } catch (e) {
+      console.warn('Username check error:', e);
+    }
+
     const cleanEmail = signupEmail.trim().toLowerCase();
 
     try {
@@ -289,27 +306,23 @@ export default function AuthPage({ onLoginSuccess }) {
     } catch (err) {
       setIsLoading(false);
       console.error('Sign up error:', err);
-      if (err.message?.toLowerCase().includes('already registered')) {
-        const authed = {
-          id: getEmailUuid(cleanEmail),
-          email: cleanEmail,
-          userId: cleanUsername,
-          name: cleanUsername,
-          user_metadata: { name: cleanUsername, username: cleanUsername, userId: cleanUsername },
-        };
-        if (onLoginSuccess) {
-          onLoginSuccess(authed);
-          return;
-        }
+      const msg = err.message || '';
+      if (msg.toLowerCase().includes('already registered')) {
+        setErrorMessage('This email is already registered. Please sign in instead.');
+        return;
       }
-      setErrorMessage(err.message || 'Failed to create account.');
+      if (msg.toLowerCase().includes('unique') || msg.toLowerCase().includes('username')) {
+        setErrorMessage(`Username "@${cleanUsername}" is already taken. Please choose another.`);
+        return;
+      }
+      setErrorMessage(msg || 'Failed to create account.');
     }
   };
 
   // Quick Demo Login for testing 2 email users simultaneously
   const handleQuickDemo = (demoEmail = 'alex@bloom.chat', demoName = 'Alex') => {
     setEmail(demoEmail);
-    setPassword('lavender123');
+    setPassword('bloom123');
     setIsLoading(true);
     setTimeout(() => {
       setIsLoading(false);
@@ -462,9 +475,6 @@ export default function AuthPage({ onLoginSuccess }) {
             <h1 className="text-2xl font-extrabold text-stone-900 tracking-tight">
               Bloom
             </h1>
-            <span className="px-2 py-0.5 rounded-full bg-violet-100 text-[10px] font-bold text-violet-800 border border-violet-200 uppercase tracking-wide">
-              lavender
-            </span>
           </div>
           <p className="text-xs text-stone-500 font-medium mt-1">
             Serene & Mindful Messaging
@@ -505,7 +515,7 @@ export default function AuthPage({ onLoginSuccess }) {
             <div className="mb-5 text-center">
               <h2 className="text-lg font-bold text-stone-800">Welcome Back</h2>
               <p className="text-xs text-stone-500 mt-0.5">
-                Sign in to continue to your lavender conversations
+                Sign in to continue to your conversations
               </p>
             </div>
 

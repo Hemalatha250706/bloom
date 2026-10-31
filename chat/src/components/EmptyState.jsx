@@ -19,7 +19,7 @@ export default function EmptyState({ onSelectFirstChat, onOpenNewChat }) {
             {/* Luminous circular backdrop */}
             <circle cx="80" cy="80" r="64" fill="#F5F3FF" />
             
-            {/* Left speech bubble - Vibrant Lavender */}
+            {/* Left speech bubble */}
             <rect
               x="26"
               y="42"
@@ -30,7 +30,7 @@ export default function EmptyState({ onSelectFirstChat, onOpenNewChat }) {
               stroke="#A78BFA"
               strokeWidth="2.5"
             />
-            {/* Lavender bubble tail */}
+            {/* Bubble tail */}
             <path
               d="M36 88 L28 102 L48 88 Z"
               fill="#EDE9FE"
@@ -91,7 +91,7 @@ export default function EmptyState({ onSelectFirstChat, onOpenNewChat }) {
         Welcome to Bloom
       </h2>
       <p className="text-stone-600 text-sm max-w-sm mb-6 leading-relaxed font-medium">
-        Select a conversation from the sidebar to start chatting in a calm, soothing lavender space.
+        Select a conversation from the sidebar to start chatting in a calm, soothing space.
       </p>
 
       {/* Action buttons */}
@@ -124,7 +124,7 @@ export default function EmptyState({ onSelectFirstChat, onOpenNewChat }) {
         </span>
         <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-purple-100 text-purple-800 text-xs font-bold border border-purple-200 shadow-xs">
           <Coffee className="w-3.5 h-3.5 text-purple-600" />
-          Lavender Aesthetic
+          Serene Aesthetic
         </span>
         <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-fuchsia-100 text-fuchsia-800 text-xs font-bold border border-fuchsia-200 shadow-xs">
           <Heart className="w-3.5 h-3.5 text-fuchsia-600" />

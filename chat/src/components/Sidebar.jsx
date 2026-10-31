@@ -6,6 +6,7 @@ import {
   PinOff,
   UserPlus,
   Trash2,
+  BellOff,
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -211,6 +212,14 @@ export default function Sidebar({
                       >
                         @{((conv.user.userId || conv.user.name || conv.user.email?.split('@')[0] || '')).replace(/^@/, '')}
                       </span>
+                      {conv.user.status_emoji && (
+                        <span className="text-xs select-none shrink-0" title={conv.user.status_text || 'Status'}>
+                          {conv.user.status_emoji}
+                        </span>
+                      )}
+                      {conv.muted && (
+                        <BellOff className="w-3.5 h-3.5 text-stone-400 shrink-0" title="Chat muted" />
+                      )}
                       {/* Pin / Unpin Button */}
                       <button
                         type="button"

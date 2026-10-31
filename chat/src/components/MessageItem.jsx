@@ -1,22 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Check, CheckCheck, Smile, Plus, X, FileText, Pin } from 'lucide-react';
+import { Check, CheckCheck, Smile, Heart, Plus, X, FileText, Pin } from 'lucide-react';
 import EmojiPicker, { EmojiStyle, Theme } from 'emoji-picker-react';
 import HDEmoji, { renderHDText } from './HDEmoji';
 
-// Top popular quick reaction emojis
+// Top popular quick reaction emojis as requested
 const QUICK_REACTION_EMOJIS = [
-  '👍',
   '❤️',
+  '👍',
   '😂',
   '😮',
   '😢',
-  '🙏',
-  '🌸',
-  '💜',
-  '✨',
   '🔥',
-  '🎉',
-  '💯',
+  '🌸',
+  '✨',
 ];
 
 export default function MessageItem({
@@ -158,21 +154,21 @@ export default function MessageItem({
             >
               <span>{message.timestamp}</span>
               {isSender && (
-                <span className="inline-flex items-center ml-1">
+                <span className="inline-flex items-center ml-1 select-none">
                   {message.status === 'read' ? (
                     <CheckCheck
                       className="w-4 h-4 text-sky-300 stroke-[2.5] drop-shadow-xs"
-                      title="Read (Blue tick)"
+                      title="Read (Double blue ticks)"
                     />
                   ) : message.status === 'delivered' ? (
                     <CheckCheck
-                      className="w-4 h-4 text-white/65 stroke-[1.8]"
-                      title="Delivered"
+                      className="w-4 h-4 text-white/60 stroke-[1.8]"
+                      title="Delivered (Double grey ticks)"
                     />
                   ) : (
                     <Check
-                      className="w-4 h-4 text-white/65 stroke-[1.8]"
-                      title="Sent"
+                      className="w-4 h-4 text-white/60 stroke-[1.8]"
+                      title="Sent (Single grey tick)"
                     />
                   )}
                 </span>
@@ -183,22 +179,37 @@ export default function MessageItem({
           {/* Existing Reaction Badge with HD Emoji */}
           {message.reaction && (
             <button
-              onClick={() => onAddReaction && onAddReaction(message.id, null)}
-              title="Click to remove reaction"
+              onClick={() => onAddReaction && onAddReaction(message.id, message.reaction)}
+              title="Click to remove or change reaction"
               className={`absolute -bottom-2.5 ${
                 isSender ? 'left-2' : 'right-2'
-              } px-2 py-0.5 rounded-full bg-white border border-violet-200 text-xs shadow-md flex items-center gap-1 hover:scale-110 transition-transform cursor-pointer`}
+              } px-2 py-0.5 rounded-full bg-white border border-violet-200 text-xs shadow-md flex items-center gap-1 hover:scale-110 active:scale-95 transition-transform cursor-pointer z-10`}
             >
               <HDEmoji emoji={message.reaction} size={16} />
             </button>
           )}
 
-          {/* Hover reaction and pin trigger buttons */}
+          {/* Hover Like, reaction and pin trigger buttons */}
           <div
-            className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1 ${
-              isSender ? '-left-16' : '-right-16'
+            className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1 z-10 ${
+              isSender ? '-left-24' : '-right-24'
             }`}
           >
+            {/* Quick Like Button (❤️) */}
+            <button
+              type="button"
+              onClick={() => handleSelectReaction('❤️')}
+              className={`w-7 h-7 rounded-full bg-white hover:bg-rose-50 border border-violet-200 flex items-center justify-center transition-all shadow-sm cursor-pointer ${
+                message.reaction === '❤️'
+                  ? 'text-rose-500 bg-rose-50 ring-2 ring-rose-200'
+                  : 'text-stone-400 hover:text-rose-500'
+              }`}
+              title={message.reaction === '❤️' ? 'Remove Like' : 'Like (❤️)'}
+            >
+              <Heart className={`w-3.5 h-3.5 ${message.reaction === '❤️' ? 'fill-rose-500 text-rose-500' : ''}`} />
+            </button>
+
+            {/* Reaction Picker Button */}
             <button
               type="button"
               onClick={() => {
@@ -206,11 +217,12 @@ export default function MessageItem({
                 setShowFullPicker(false);
               }}
               className="w-7 h-7 rounded-full bg-white hover:bg-violet-50 border border-violet-200 text-violet-600 flex items-center justify-center transition-colors shadow-sm cursor-pointer"
-              title="React to message"
+              title="React with emojis"
             >
               <Smile className="w-4 h-4 text-violet-500" />
             </button>
 
+            {/* Pin Message Button */}
             <button
               type="button"
               onClick={() => onTogglePinMessage && onTogglePinMessage(message.id)}

@@ -65,7 +65,7 @@ export const INITIAL_STATUSES = [
         id: 's1-1',
         type: 'image',
         url: 'https://images.unsplash.com/photo-1518531933037-91b2f5f229cc?auto=format&fit=crop&w=800&q=80',
-        caption: 'Morning watercolor session with wild lavender 🌿🌸',
+        caption: 'Morning watercolor session with wild flowers 🌿🌸',
         createdAt: '10:15 AM',
         viewsCount: 38,
         likesCount: 14,

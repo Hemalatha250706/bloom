@@ -1,4 +1,4 @@
-// Mock data for Bloom Lavender Chat application
+// Mock data for Bloom Chat application
 
 export const CURRENT_USER = {
   id: 'current_user',
@@ -58,7 +58,7 @@ export const INITIAL_CONVERSATIONS = [
       {
         id: 'm1-3',
         senderId: 'u1',
-        text: 'They turned out so soft and soothing! Blended mint sage with warm cream and a touch of lavender mist.',
+        text: 'They turned out so soft and soothing! Blended mint sage with warm cream and a touch of violet mist.',
         timestamp: '09:45 AM',
         date: 'Today',
         status: 'read',
@@ -237,7 +237,7 @@ export const INITIAL_CONVERSATIONS = [
       {
         id: 'm5-2',
         senderId: 'u5',
-        text: 'The new lavender glazed mugs just came out of the kiln! 🌸',
+        text: 'The new handcrafted mugs just came out of the kiln! 🌸',
         timestamp: 'Yesterday',
         date: 'Yesterday',
         status: 'read',

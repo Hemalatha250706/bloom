@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 
 const GRADIENT_PRESETS = [
-  { id: 'g1', name: 'Lavender', bg: 'bg-gradient-to-tr from-violet-600 via-purple-600 to-indigo-600' },
+  { id: 'g1', name: 'Violet', bg: 'bg-gradient-to-tr from-violet-600 via-purple-600 to-indigo-600' },
   { id: 'g2', name: 'Rose', bg: 'bg-gradient-to-tr from-fuchsia-600 via-pink-600 to-rose-600' },
   { id: 'g3', name: 'Mint', bg: 'bg-gradient-to-tr from-emerald-600 via-teal-600 to-cyan-600' },
   { id: 'g4', name: 'Sunset', bg: 'bg-gradient-to-tr from-amber-500 via-orange-500 to-rose-500' },

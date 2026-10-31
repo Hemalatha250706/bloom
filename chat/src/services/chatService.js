@@ -174,19 +174,19 @@ export const chatService = {
   },
 
   /**
-   * Search registered users by email address
+   * Search registered users by username (case-insensitive)
    * Excludes the currently logged-in user from search results.
    */
-  async searchUsersByEmail(searchQuery, currentUserId) {
-    const query = (searchQuery || '').trim().toLowerCase();
+  async searchUsers(searchQuery, currentUserId) {
+    const query = (searchQuery || '').trim().toLowerCase().replace(/^@/, '');
     if (!query) return [];
 
     try {
       let req = supabase
         .from('profiles')
-        .select('id, name, email, avatar_url, about, status')
-        .ilike('email', `%${query}%`)
-        .limit(10);
+        .select('id, name, username, avatar_url, about, status, status_emoji, status_text')
+        .or(`username.ilike.%${query}%,name.ilike.%${query}%,email.ilike.%${query}%`)
+        .limit(15);
 
       if (currentUserId) {
         req = req.neq('id', currentUserId);
@@ -194,13 +194,71 @@ export const chatService = {
 
       const { data, error } = await req;
       if (error) {
-        console.warn('searchUsersByEmail DB notice:', error.message);
+        console.warn('searchUsers DB notice:', error.message);
         return [];
       }
-      return data || [];
+      return (data || []).map((u) => {
+        const handle = (u.username || u.name || '').replace(/^@/, '');
+        return {
+          id: u.id,
+          name: handle,
+          username: handle,
+          userId: handle,
+          avatar_url: u.avatar_url,
+          status_emoji: u.status_emoji || '🌸',
+          status_text: u.status_text || u.about || 'Available',
+          about: u.about || 'Available',
+          status: u.status || 'offline',
+        };
+      });
     } catch (err) {
-      console.warn('searchUsersByEmail exception:', err);
+      console.warn('searchUsers exception:', err);
       return [];
+    }
+  },
+
+  /**
+   * Alias for backward compatibility
+   */
+  async searchUsersByEmail(searchQuery, currentUserId) {
+    return this.searchUsers(searchQuery, currentUserId);
+  },
+
+  /**
+   * Updates user's custom status emoji and text in profiles table
+   */
+  async updateUserStatus(userId, { statusEmoji, statusText }) {
+    if (!userId) return null;
+    const emoji = statusEmoji || '🌸';
+    const text = statusText || 'Available';
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({
+          status_emoji: emoji,
+          status_text: text,
+          about: text,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', userId)
+        .select()
+        .single();
+
+      if (error) console.warn('updateUserStatus notice:', error.message);
+
+      // Broadcast status update
+      if (globalRealtimeChannel) {
+        globalRealtimeChannel.send({
+          type: 'broadcast',
+          event: 'user_status_updated',
+          payload: { userId, statusEmoji: emoji, statusText: text },
+        });
+      }
+
+      return data;
+    } catch (e) {
+      console.warn('updateUserStatus exception:', e);
+      return null;
     }
   },
 
@@ -240,8 +298,16 @@ export const chatService = {
           .limit(1);
 
         if (!sharedErr && shared && shared.length > 0) {
-          // Existing conversation found! Return it without creating duplicate
-          return shared[0].conversation_id;
+          const matchedId = shared[0].conversation_id;
+          // Unhide conversation if it was previously hidden by this user
+          try {
+            await supabase
+              .from('conversation_participants')
+              .update({ is_hidden: false })
+              .eq('conversation_id', matchedId)
+              .eq('user_id', currentUserId);
+          } catch (e) {}
+          return matchedId;
         }
       }
 
@@ -280,7 +346,8 @@ export const chatService = {
   },
 
   /**
-   * Fetches all conversations for a user, including participant info & last message.
+   * Fetches all active conversations for a user, including participant info & last message.
+   * Filters out conversations hidden/deleted by the current user.
    * Deduplicates contacts so each user appears only once.
    */
   async fetchUserConversations(currentUserId) {
@@ -290,17 +357,24 @@ export const chatService = {
       // 1. Get all conversation IDs where current user is a participant
       const { data: participations, error: partErr } = await supabase
         .from('conversation_participants')
-        .select('conversation_id, pinned, unread_count')
+        .select('conversation_id, pinned, muted, is_hidden, hidden_at, unread_count')
         .eq('user_id', currentUserId);
 
       if (partErr || !participations || participations.length === 0) {
         return [];
       }
 
+      // Filter out conversations hidden by the current user (per-user soft delete)
+      const visibleParticipations = participations.filter((p) => !p.is_hidden);
+      if (visibleParticipations.length === 0) {
+        return [];
+      }
+
       const convMap = new Map();
-      participations.forEach((p) => {
+      visibleParticipations.forEach((p) => {
         convMap.set(p.conversation_id, {
           pinned: Boolean(p.pinned),
+          muted: Boolean(p.muted),
           unreadCount: p.unread_count || 0,
         });
       });
@@ -316,10 +390,12 @@ export const chatService = {
           profiles (
             id,
             name,
-            email,
+            username,
             avatar_url,
             about,
-            status
+            status,
+            status_emoji,
+            status_text
           )
         `)
         .in('conversation_id', convIds)
@@ -366,7 +442,6 @@ export const chatService = {
         const rawUsername =
           otherProfile?.username ||
           otherProfile?.name ||
-          otherProfile?.email?.split('@')[0] ||
           'user';
         const cleanHandle = rawUsername.replace(/^@/, '');
 
@@ -377,13 +452,15 @@ export const chatService = {
             name: cleanHandle,
             userId: cleanHandle,
             username: cleanHandle,
-            email: otherProfile?.email || '',
             avatar: otherProfile?.avatar_url || '',
-            about: otherProfile?.about || 'Available 🌸',
+            about: otherProfile?.status_text || otherProfile?.about || 'Available',
             status: otherProfile?.status || 'offline',
+            status_emoji: otherProfile?.status_emoji || '🌸',
+            status_text: otherProfile?.status_text || otherProfile?.about || 'Available',
           },
           unreadCount: convMeta.unreadCount || 0,
           pinned: convMeta.pinned || false,
+          muted: convMeta.muted || false,
           lastActivity: lastMsg?.created_at
             ? new Date(lastMsg.created_at).getTime()
             : Date.now(),
@@ -400,6 +477,81 @@ export const chatService = {
     } catch (err) {
       console.warn('fetchUserConversations exception:', err);
       return [];
+    }
+  },
+
+  /**
+   * Mute or Unmute a conversation for the current user
+   */
+  async toggleMuteConversation(conversationId, currentUserId, isMuted) {
+    if (!conversationId || !currentUserId) return;
+    try {
+      const { error } = await supabase
+        .from('conversation_participants')
+        .update({ muted: isMuted })
+        .eq('conversation_id', conversationId)
+        .eq('user_id', currentUserId);
+
+      if (error) console.warn('toggleMuteConversation notice:', error.message);
+    } catch (e) {
+      console.warn('toggleMuteConversation exception:', e);
+    }
+  },
+
+  /**
+   * Safe per-user deletion (soft delete) of a conversation from current user's list.
+   * Does NOT delete messages or remove the chat for the other user.
+   */
+  async hideConversationForUser(conversationId, currentUserId) {
+    if (!conversationId || !currentUserId) return;
+    try {
+      const { error } = await supabase
+        .from('conversation_participants')
+        .update({ is_hidden: true, hidden_at: new Date().toISOString() })
+        .eq('conversation_id', conversationId)
+        .eq('user_id', currentUserId);
+
+      if (error) console.warn('hideConversationForUser notice:', error.message);
+    } catch (e) {
+      console.warn('hideConversationForUser exception:', e);
+    }
+  },
+
+  /**
+   * Marks unread messages in a conversation as read by the current user.
+   * Updates message status to 'read' (double blue ticks) and notifies sender via realtime.
+   */
+  async markMessagesAsRead(conversationId, currentUserId) {
+    if (!conversationId || !currentUserId) return;
+    const now = new Date().toISOString();
+    try {
+      // 1. Update messages in Supabase where receiver is currentUserId and status != 'read'
+      const { error: msgErr } = await supabase
+        .from('messages')
+        .update({ status: 'read', read_at: now })
+        .eq('conversation_id', conversationId)
+        .neq('sender_id', currentUserId)
+        .neq('status', 'read');
+
+      if (msgErr) console.warn('markMessagesAsRead notice:', msgErr.message);
+
+      // 2. Reset unread counter for current user in conversation_participants
+      await supabase
+        .from('conversation_participants')
+        .update({ unread_count: 0, last_read_at: now })
+        .eq('conversation_id', conversationId)
+        .eq('user_id', currentUserId);
+
+      // 3. Broadcast read receipt so sender UI updates to double blue ticks immediately
+      if (globalRealtimeChannel) {
+        globalRealtimeChannel.send({
+          type: 'broadcast',
+          event: 'messages_read',
+          payload: { conversationId, readerId: currentUserId, readAt: now },
+        });
+      }
+    } catch (e) {
+      console.warn('markMessagesAsRead exception:', e);
     }
   },
 
@@ -441,7 +593,7 @@ export const chatService = {
     senderName,
     text,
     attachment,
-    status = 'delivered',
+    status = 'sent',
     reaction = null,
   }) {
     if (!conversationId || !senderId) {
@@ -459,7 +611,7 @@ export const chatService = {
       senderName: senderName || '',
       text: text || '',
       attachment: attachment || null,
-      status,
+      status, // starts as 'sent' (single grey tick)
       reaction,
       timestamp: formatTimestamp(now),
       date: 'Today',
@@ -499,10 +651,67 @@ export const chatService = {
   },
 
   /**
-   * Subscribes to new messages for a specific conversation using Supabase Realtime.
+   * Adds, updates, or removes an emoji reaction on a message.
+   * Updates Supabase and broadcasts to both users in real-time.
+   */
+  async toggleMessageReaction({ messageId, conversationId, currentUserId, emoji }) {
+    if (!messageId) return null;
+    try {
+      // 1. Fetch current reaction
+      const { data: currentMsg } = await supabase
+        .from('messages')
+        .select('reaction')
+        .eq('id', messageId)
+        .single();
+
+      const newReaction = currentMsg?.reaction === emoji ? null : emoji;
+
+      // 2. Update messages table
+      await supabase
+        .from('messages')
+        .update({ reaction: newReaction })
+        .eq('id', messageId);
+
+      // 3. Upsert into message_reactions table if present
+      try {
+        if (newReaction && currentUserId) {
+          await supabase
+            .from('message_reactions')
+            .upsert(
+              { message_id: messageId, user_id: currentUserId, emoji: newReaction },
+              { onConflict: 'message_id,user_id' }
+            );
+        } else if (!newReaction && currentUserId) {
+          await supabase
+            .from('message_reactions')
+            .delete()
+            .eq('message_id', messageId)
+            .eq('user_id', currentUserId);
+        }
+      } catch (e) {}
+
+      // 4. Broadcast live reaction event
+      if (globalRealtimeChannel) {
+        globalRealtimeChannel.send({
+          type: 'broadcast',
+          event: 'message_reaction',
+          payload: { messageId, conversationId, reaction: newReaction, userId: currentUserId },
+        });
+      }
+
+      return newReaction;
+    } catch (e) {
+      console.warn('toggleMessageReaction exception:', e);
+      return emoji;
+    }
+  },
+
+  /**
+   * Subscribes to new messages and message updates (e.g. read status, reactions)
+   * for a specific conversation using Supabase Realtime.
    * Cleanly unsubscribes from any previous conversation channel.
    */
-  subscribeToConversationMessages(conversationId, onMessageReceived) {
+  subscribeToConversationMessages(conversationId, onMessageReceived, onMessageUpdated) {
     if (!conversationId) return () => {};
 
     // Clean up previous conversation subscription
@@ -519,15 +728,23 @@ export const chatService = {
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*', // Listen to INSERT, UPDATE
           schema: 'public',
           table: 'messages',
           filter: `conversation_id=eq.${conversationId}`,
         },
         (payload) => {
-          if (payload?.new && typeof onMessageReceived === 'function') {
+          if (!payload) return;
+          if (payload.eventType === 'INSERT' && payload.new) {
             const mapped = mapSupabaseMessage(payload.new);
-            if (mapped) onMessageReceived(mapped);
+            if (mapped && typeof onMessageReceived === 'function') {
+              onMessageReceived(mapped);
+            }
+          } else if (payload.eventType === 'UPDATE' && payload.new) {
+            const mapped = mapSupabaseMessage(payload.new);
+            if (mapped && typeof onMessageUpdated === 'function') {
+              onMessageUpdated(mapped);
+            }
           }
         }
       )
@@ -549,7 +766,15 @@ export const chatService = {
   // 4. GLOBAL REALTIME HUB (Presence + Live Broadcasts)
   // ==============================================================================
 
-  initRealtimeHub(currentUser, { onPresenceChange, onMessageReceived, onStatusReceived, onStatusViewReceived }) {
+  initRealtimeHub(currentUser, {
+    onPresenceChange,
+    onMessageReceived,
+    onStatusReceived,
+    onStatusViewReceived,
+    onMessagesRead,
+    onMessageReaction,
+    onUserStatusUpdated,
+  }) {
     if (!currentUser) return () => {};
 
     const cleanEmail = currentUser.email ? currentUser.email.toLowerCase().trim() : '';
@@ -622,6 +847,27 @@ export const chatService = {
         if (!payload) return;
         if (typeof onStatusViewReceived === 'function') {
           onStatusViewReceived(payload);
+        }
+      })
+      // Read Receipts Broadcast (turns ticks blue)
+      .on('broadcast', { event: 'messages_read' }, ({ payload }) => {
+        if (!payload) return;
+        if (typeof onMessagesRead === 'function') {
+          onMessagesRead(payload);
+        }
+      })
+      // Live Emoji Reaction Broadcast
+      .on('broadcast', { event: 'message_reaction' }, ({ payload }) => {
+        if (!payload) return;
+        if (typeof onMessageReaction === 'function') {
+          onMessageReaction(payload);
+        }
+      })
+      // Live User Status Emoji & Text Broadcast
+      .on('broadcast', { event: 'user_status_updated' }, ({ payload }) => {
+        if (!payload) return;
+        if (typeof onUserStatusUpdated === 'function') {
+          onUserStatusUpdated(payload);
         }
       })
       .subscribe(async (status) => {

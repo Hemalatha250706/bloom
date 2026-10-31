@@ -6,6 +6,7 @@ import {
   MoreVertical,
   User,
   Trash2,
+  Bell,
   BellOff,
   Pin,
   PinOff,
@@ -14,7 +15,9 @@ import {
 export default function ChatHeader({
   activeUser,
   isPinned = false,
+  isMuted = false,
   onTogglePin,
+  onToggleMute,
   onBackToList,
   onOpenProfile,
   onClearChat,
@@ -79,8 +82,18 @@ export default function ChatHeader({
         <div className="cursor-pointer" onClick={onOpenProfile}>
           <div className="flex items-center gap-1.5">
             <h2 className="font-bold text-stone-900 text-sm sm:text-base leading-tight group-hover:text-violet-800 transition-colors">
-              @{((activeUser.userId || activeUser.name || activeUser.email?.split('@')[0] || '')).replace(/^@/, '')}
+              @{((activeUser.userId || activeUser.name || '')).replace(/^@/, '')}
             </h2>
+            {activeUser.status_emoji && (
+              <span className="text-xs select-none" title={activeUser.status_text || 'Status'}>
+                {activeUser.status_emoji}
+              </span>
+            )}
+            {isMuted && (
+              <span title="Notifications muted">
+                <BellOff className="w-3.5 h-3.5 text-stone-400" />
+              </span>
+            )}
             {isPinned && (
               <button
                 type="button"
@@ -95,7 +108,7 @@ export default function ChatHeader({
               </button>
             )}
           </div>
-          <p className="text-xs text-stone-500 leading-normal flex items-center gap-1.5 mt-0.5 font-medium">
+          <div className="text-xs text-stone-500 leading-normal flex items-center gap-1.5 mt-0.5 font-medium">
             {isTyping ? (
               <span className="text-violet-600 font-bold flex items-center gap-1.5">
                 <span className="flex gap-0.5 items-center">
@@ -105,14 +118,24 @@ export default function ChatHeader({
                 </span>
                 typing...
               </span>
-            ) : isOnline ? (
-              <span className="text-emerald-600 font-semibold">
-                Online
-              </span>
             ) : (
-              <span className="text-stone-400">Offline</span>
+              <div className="flex items-center gap-1.5">
+                {isOnline ? (
+                  <span className="text-emerald-600 font-semibold">Online</span>
+                ) : (
+                  <span className="text-stone-400">Offline</span>
+                )}
+                {(activeUser.status_text || activeUser.about) && (
+                  <>
+                    <span className="text-stone-300">•</span>
+                    <span className="text-stone-500 truncate max-w-[140px] sm:max-w-[200px]">
+                      {activeUser.status_text || activeUser.about}
+                    </span>
+                  </>
+                )}
+              </div>
             )}
-          </p>
+          </div>
         </div>
       </div>
 
@@ -186,15 +209,25 @@ export default function ChatHeader({
                 )}
               </button>
 
+              {/* Mute / Unmute Action */}
               <button
                 onClick={() => {
                   setShowMenu(false);
-                  alert(`Notifications muted for @${((activeUser.userId || activeUser.name || '')).replace(/^@/, '')}`);
+                  onToggleMute && onToggleMute();
                 }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-stone-700 hover:bg-purple-50 hover:text-purple-800 transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-stone-700 hover:bg-violet-50 hover:text-violet-800 transition-colors cursor-pointer"
               >
-                <BellOff className="w-4 h-4 text-purple-500" />
-                <span>Mute Notifications</span>
+                {isMuted ? (
+                  <>
+                    <Bell className="w-4 h-4 text-violet-600" />
+                    <span>Unmute Chat Notifications</span>
+                  </>
+                ) : (
+                  <>
+                    <BellOff className="w-4 h-4 text-purple-600" />
+                    <span>Mute Chat Notifications</span>
+                  </>
+                )}
               </button>
               <div className="my-1 border-t border-stone-100" />
               <button
@@ -216,7 +249,7 @@ export default function ChatHeader({
                 className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
               >
                 <Trash2 className="w-4 h-4 text-rose-500" />
-                <span>Delete Chat & Contact</span>
+                <span>Delete Chat</span>
               </button>
             </div>
           )}

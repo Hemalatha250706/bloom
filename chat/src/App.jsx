@@ -348,8 +348,13 @@ export default function App() {
 
             if (alreadyExists) return prev;
 
-            const updatedMsgs = [...targetConv.messages, incomingMsg];
             const isCurrentActive = activeConversationIdRef.current === targetConv.id;
+            if (isCurrentActive) {
+              incomingMsg.status = 'read';
+              chatService.markMessagesAsRead(targetConv.id, currentUser.id);
+            }
+
+            const updatedMsgs = [...targetConv.messages, incomingMsg];
 
             targetConv = {
               ...targetConv,
@@ -357,7 +362,7 @@ export default function App() {
               unreadCount:
                 isReceiver && !isCurrentActive
                   ? (targetConv.unreadCount || 0) + 1
-                  : targetConv.unreadCount || 0,
+                  : 0,
               messages: updatedMsgs,
             };
 
@@ -403,6 +408,55 @@ export default function App() {
           return updated;
         });
       },
+      // Real-time Read Receipts: Sender receives notification that recipient opened chat
+      onMessagesRead: ({ conversationId, readerId }) => {
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id === conversationId) {
+              const updatedMsgs = c.messages.map((m) =>
+                m.senderId !== readerId ? { ...m, status: 'read' } : m
+              );
+              chatService.saveMessagesToCache(conversationId, updatedMsgs);
+              return { ...c, messages: updatedMsgs };
+            }
+            return c;
+          })
+        );
+      },
+      // Real-time Emoji Reactions
+      onMessageReaction: ({ messageId, conversationId, reaction }) => {
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id === conversationId) {
+              const updatedMsgs = c.messages.map((m) =>
+                m.id === messageId ? { ...m, reaction } : m
+              );
+              chatService.saveMessagesToCache(conversationId, updatedMsgs);
+              return { ...c, messages: updatedMsgs };
+            }
+            return c;
+          })
+        );
+      },
+      // Real-time Status Emoji & Text updates
+      onUserStatusUpdated: ({ userId, statusEmoji, statusText }) => {
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.user.id === userId || c.user.userId === userId) {
+              return {
+                ...c,
+                user: {
+                  ...c.user,
+                  status_emoji: statusEmoji,
+                  status_text: statusText,
+                  about: statusText,
+                },
+              };
+            }
+            return c;
+          })
+        );
+      },
     });
 
     return () => {
@@ -421,11 +475,11 @@ export default function App() {
         setConversations((prev) => {
           const map = new Map();
           remoteConvs.forEach((rc) => {
-            const key = (rc.user?.email || rc.user?.id || rc.id).toLowerCase().trim();
+            const key = (rc.user?.userId || rc.user?.id || rc.id).toLowerCase().trim();
             map.set(key, rc);
           });
           prev.forEach((pc) => {
-            const key = (pc.user?.email || pc.user?.id || pc.id).toLowerCase().trim();
+            const key = (pc.user?.userId || pc.user?.id || pc.id).toLowerCase().trim();
             if (!map.has(key)) {
               map.set(key, pc);
             }
@@ -444,7 +498,25 @@ export default function App() {
   useEffect(() => {
     if (!activeConversationId) return;
 
-    // Fetch persisted messages from Supabase
+    // 1. Mark unread messages in the active chat as read (WhatsApp-style double blue ticks)
+    if (currentUser?.id) {
+      chatService.markMessagesAsRead(activeConversationId, currentUser.id);
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id === activeConversationId) {
+            const updated = c.messages.map((m) =>
+              m.senderId !== currentUser.id && m.status !== 'read'
+                ? { ...m, status: 'read' }
+                : m
+            );
+            return { ...c, messages: updated, unreadCount: 0 };
+          }
+          return c;
+        })
+      );
+    }
+
+    // 2. Fetch full message history from Supabase
     chatService.fetchMessagesForConversation(activeConversationId).then((dbMsgs) => {
       if (dbMsgs && dbMsgs.length > 0) {
         setConversations((prev) =>
@@ -456,7 +528,7 @@ export default function App() {
                 (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)
               );
               chatService.saveMessagesToCache(activeConversationId, combined);
-              return { ...c, messages: combined };
+              return { ...c, messages: combined, unreadCount: 0 };
             }
             return c;
           })
@@ -464,14 +536,22 @@ export default function App() {
       }
     });
 
-    // Realtime subscription on public.messages for this conversation
+    // 3. Realtime subscription on public.messages for this conversation
     const cleanupSub = chatService.subscribeToConversationMessages(
       activeConversationId,
+      // onMessageReceived (INSERT)
       (newMsg) => {
+        // If message is from other user and chat is open, immediately mark as read
+        if (newMsg.senderId !== currentUser?.id) {
+          newMsg.status = 'read';
+          if (currentUser?.id) {
+            chatService.markMessagesAsRead(activeConversationId, currentUser.id);
+          }
+        }
+
         setConversations((prev) =>
           prev.map((c) => {
             if (c.id === activeConversationId) {
-              // Deduplicate: check by ID or matching text + sender within 4 seconds
               const alreadyHas = c.messages.some(
                 (m) =>
                   m.id === newMsg.id ||
@@ -481,7 +561,6 @@ export default function App() {
               );
 
               if (alreadyHas) {
-                // If it was a temp optimistic message, upgrade it with the confirmed DB ID
                 const updated = c.messages.map((m) =>
                   m.senderId === newMsg.senderId &&
                   m.text === newMsg.text &&
@@ -499,7 +578,23 @@ export default function App() {
                 ...c,
                 lastActivity: Date.now(),
                 messages: updatedMsgs,
+                unreadCount: 0,
               };
+            }
+            return c;
+          })
+        );
+      },
+      // onMessageUpdated (UPDATE e.g. status changed to 'read' or reaction updated)
+      (updatedMsg) => {
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id === activeConversationId) {
+              const updated = c.messages.map((m) =>
+                m.id === updatedMsg.id ? { ...m, ...updatedMsg } : m
+              );
+              chatService.saveMessagesToCache(activeConversationId, updated);
+              return { ...c, messages: updated };
             }
             return c;
           })
@@ -510,7 +605,7 @@ export default function App() {
     return () => {
       if (typeof cleanupSub === 'function') cleanupSub();
     };
-  }, [activeConversationId]);
+  }, [activeConversationId, currentUser?.id]);
 
   // Handle Logout
   const handleLogout = async () => {
@@ -608,6 +703,9 @@ export default function App() {
     const myId = currentUser.id || 'current_user';
     const myEmail = (currentUser.email || '').toLowerCase().trim();
 
+    const isReceiverOnline = isContactOnline(currentConv.user, presenceState);
+    const initialStatus = isReceiverOnline ? 'delivered' : 'sent';
+
     const newMessage = {
       id: tempMsgId,
       conversationId: activeConversationId,
@@ -618,7 +716,7 @@ export default function App() {
       attachment: attachment || null,
       timestamp: timeString,
       date: 'Today',
-      status: 'delivered', // Double gray tick
+      status: initialStatus, // 'sent' (single grey tick) or 'delivered' (double grey ticks)
       created_at: now.toISOString(),
     };
 
@@ -649,7 +747,7 @@ export default function App() {
         senderName: currentUser.name || myEmail.split('@')[0],
         text: text || '',
         attachment,
-        status: 'delivered',
+        status: initialStatus,
       });
 
       if (saved && saved.id) {
@@ -771,17 +869,41 @@ export default function App() {
     });
   };
 
-  // Delete a conversation & contact completely
-  const handleDeleteConversation = (convId, contactName) => {
+  // Mute / Unmute a conversation
+  const handleToggleMuteConversation = async (convId) => {
+    if (!convId) return;
+    let newMuted = false;
+    setConversations((prev) => {
+      const updated = prev.map((c) => {
+        if (c.id === convId) {
+          newMuted = !c.muted;
+          return { ...c, muted: newMuted };
+        }
+        return c;
+      });
+      chatService.saveConversationsToCache(currentUser.id, updated);
+      return updated;
+    });
+
+    if (currentUser?.id) {
+      await chatService.toggleMuteConversation(convId, currentUser.id, newMuted);
+    }
+  };
+
+  // Delete conversation for current user (per-user soft delete)
+  const handleDeleteConversation = async (convId, contactName) => {
     const confirmDelete = window.confirm(
-      `Are you sure you want to delete conversation with ${contactName || 'this contact'}?`
+      `Are you sure you want to delete this conversation with ${contactName || 'this contact'}? This will remove the chat from your list while preserving it for the other user.`
     );
     if (!confirmDelete) return;
 
+    if (currentUser?.id) {
+      await chatService.hideConversationForUser(convId, currentUser.id);
+    }
+
     setConversations((prev) => {
       const updated = prev.filter((c) => c.id !== convId);
-      chatService.saveConversationsToCache(currentUser.email || currentUser.id, updated);
-      chatService.saveMessagesToCache(convId, []);
+      chatService.saveConversationsToCache(currentUser.id, updated);
       return updated;
     });
 
@@ -791,8 +913,10 @@ export default function App() {
     }
   };
 
-  // Add/toggle reaction on a message (Saved permanently)
-  const handleAddReaction = (messageId, emoji) => {
+  // Add/toggle reaction on a message (Saved in Supabase & broadcast in real time)
+  const handleAddReaction = async (messageId, emoji) => {
+    if (!messageId) return;
+
     setConversations((prev) => {
       const updated = prev.map((conv) => {
         if (conv.id === activeConversationId) {
@@ -815,6 +939,15 @@ export default function App() {
       });
       return updated;
     });
+
+    if (currentUser?.id) {
+      await chatService.toggleMessageReaction({
+        messageId,
+        conversationId: activeConversationId,
+        currentUserId: currentUser.id,
+        emoji,
+      });
+    }
   };
 
   // Safeguarded Clear Chat (Keeps messages safe from accidental deletion)
@@ -889,9 +1022,35 @@ export default function App() {
   };
 
   // Handle current user profile update
-  const handleUpdateCurrentUser = (updatedUser) => {
+  const handleUpdateCurrentUser = async (updatedUser) => {
     setCurrentUser(updatedUser);
     setProfileModalUser(updatedUser);
+
+    if (currentUser?.id && (updatedUser.status_emoji || updatedUser.status_text)) {
+      await chatService.updateUserStatus(currentUser.id, {
+        statusEmoji: updatedUser.status_emoji,
+        statusText: updatedUser.status_text,
+      });
+    }
+
+    try {
+      const saved = localStorage.getItem('bloom_auth_session');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        parsed.user = {
+          ...parsed.user,
+          user_metadata: {
+            ...(parsed.user?.user_metadata || {}),
+            status_emoji: updatedUser.status_emoji,
+            status_text: updatedUser.status_text,
+            name: updatedUser.name,
+            userId: updatedUser.userId,
+            avatar: updatedUser.avatar,
+          },
+        };
+        localStorage.setItem('bloom_auth_session', JSON.stringify(parsed));
+      }
+    } catch (e) {}
   };
 
   // Post a new real status update (persisted and broadcast live)
@@ -1050,7 +1209,9 @@ export default function App() {
               <ChatHeader
                 activeUser={activeConversation.user}
                 isPinned={Boolean(activeConversation.pinned)}
+                isMuted={Boolean(activeConversation.muted)}
                 onTogglePin={() => handleTogglePin(activeConversation.id)}
+                onToggleMute={() => handleToggleMuteConversation(activeConversation.id)}
                 onBackToList={() => setShowMobileChat(false)}
                 onOpenProfile={() => setProfileModalUser(activeConversation.user)}
                 onClearChat={handleClearChat}

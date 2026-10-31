@@ -281,7 +281,7 @@ export default function MessageInput({ onSendMessage, disabled }) {
           className="flex-1 bg-transparent py-2 px-1 text-sm text-stone-800 placeholder:text-stone-400 focus:outline-none font-medium"
         />
 
-        {/* Send Button in Lavender Gradient */}
+        {/* Send Button */}
         <button
           type="button"
           onClick={handleSend}

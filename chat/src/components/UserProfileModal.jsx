@@ -13,6 +13,9 @@ import {
 } from 'lucide-react';
 import { ABOUT_PRESETS } from '../data/mockData';
 
+// Available status emojis for user selection
+const STATUS_EMOJIS = ['😊', '❤️', '🔥', '🌸', '🌿', '🎉', '✨', '😎'];
+
 export default function UserProfileModal({
   isOpen,
   onClose,
@@ -26,6 +29,8 @@ export default function UserProfileModal({
     name: '',
     userId: '',
     about: '',
+    statusEmoji: '🌸',
+    statusText: 'Available',
     email: '',
     phone: '',
     avatar: '',
@@ -40,7 +45,9 @@ export default function UserProfileModal({
       setFormData({
         name: user.name || '',
         userId: user.userId || user.email?.split('@')[0] || '',
-        about: user.about || 'Available 🌸',
+        about: user.status_text || user.about || 'Available',
+        statusEmoji: user.status_emoji || '🌸',
+        statusText: user.status_text || user.about || 'Available',
         email: user.email || '',
         phone: user.phone || '',
         avatar: user.avatar || '',
@@ -116,6 +123,9 @@ export default function UserProfileModal({
         ...formData,
         userId: cleanUsername,
         name: cleanUsername,
+        status_emoji: formData.statusEmoji || '🌸',
+        status_text: formData.statusText || 'Available',
+        about: formData.statusText || 'Available',
       });
     }
     setIsEditing(false);
@@ -133,7 +143,7 @@ export default function UserProfileModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/35 backdrop-blur-xs animate-in fade-in duration-150">
       <div className="relative w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 border border-violet-100 shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
-        {/* Decorative lavender gradient header */}
+        {/* Decorative gradient header */}
         <div className="absolute top-0 left-0 right-0 h-28 bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500 pointer-events-none" />
 
         {/* Header action buttons */}
@@ -286,20 +296,20 @@ export default function UserProfileModal({
 
           {/* ---------------- ABOUT & CONTACT INFO ---------------- */}
           {!isEditing ? (
-            /* View Mode: About & Contact Info */
+            /* View Mode: Status & Contact Info */
             <div className="space-y-3 pt-1">
-              {/* Dedicated About Card */}
+              {/* Dedicated Status Card with Emoji */}
               <div className="p-3.5 rounded-2xl bg-violet-50/70 border border-violet-100 flex items-start justify-between gap-3">
-                <div className="flex items-start gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-violet-200/80 text-violet-800 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-xs">
-                    <Info className="w-4 h-4" />
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-violet-200/80 text-2xl flex items-center justify-center shrink-0 shadow-xs select-none">
+                    {user.status_emoji || '🌸'}
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <span className="block text-[10px] font-bold text-violet-600 uppercase tracking-wider">
-                      About
+                      Status
                     </span>
-                    <p className="text-sm font-semibold text-stone-800 mt-0.5 leading-relaxed">
-                      {user.about || 'Available 🌸'}
+                    <p className="text-sm font-semibold text-stone-800 mt-0.5 leading-relaxed truncate">
+                      {user.status_text || user.about || 'Available'}
                     </p>
                   </div>
                 </div>
@@ -307,15 +317,15 @@ export default function UserProfileModal({
                 {isCurrentUser && (
                   <button
                     onClick={() => setIsEditing(true)}
-                    className="p-1.5 rounded-lg text-violet-600 hover:bg-violet-200/60 transition-colors cursor-pointer"
-                    title="Change About"
+                    className="p-1.5 rounded-lg text-violet-600 hover:bg-violet-200/60 transition-colors cursor-pointer shrink-0"
+                    title="Change Status"
                   >
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
                 )}
               </div>
 
-              {/* Username & Email */}
+              {/* Username & Private Info */}
               <div className="space-y-2.5 py-2 border-t border-b border-stone-100 text-xs font-medium">
                 <div className="flex items-center gap-3 text-stone-700">
                   <div className="w-8 h-8 rounded-xl bg-violet-100 flex items-center justify-center text-violet-600 flex-shrink-0 shadow-xs">
@@ -327,13 +337,13 @@ export default function UserProfileModal({
                   </div>
                 </div>
 
-                {user.email && (
+                {isCurrentUser && user.email && (
                   <div className="flex items-center gap-3 text-stone-700">
                     <div className="w-8 h-8 rounded-xl bg-violet-100 flex items-center justify-center text-violet-600 flex-shrink-0 shadow-xs">
                       <Mail className="w-4 h-4" />
                     </div>
                     <div>
-                      <span className="block text-[10px] text-stone-400 uppercase font-bold">Email</span>
+                      <span className="block text-[10px] text-stone-400 uppercase font-bold">Email (Private to you)</span>
                       <span className="font-semibold text-stone-800">{user.email}</span>
                     </div>
                   </div>
@@ -341,7 +351,7 @@ export default function UserProfileModal({
               </div>
             </div>
           ) : (
-            /* Edit Mode: Set Username & About (No separate Name field) */
+            /* Edit Mode: Set Username & Status Emoji + Text */
             <form onSubmit={handleSave} className="space-y-3.5 pt-1">
               {/* Username */}
               <div>
@@ -368,41 +378,87 @@ export default function UserProfileModal({
                 </div>
               </div>
 
-              {/* ABOUT (Set About input + quick presets) */}
+              {/* Status Emoji Selection */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-[11px] font-bold text-stone-700 uppercase tracking-wider">
+                    Status Emoji
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormData({
+                        ...formData,
+                        statusEmoji: '🌸',
+                        statusText: 'Available',
+                        about: 'Available',
+                      })
+                    }
+                    className="text-[10px] text-stone-400 hover:text-rose-600 font-semibold cursor-pointer"
+                  >
+                    Reset Status
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5 p-2 bg-stone-50 rounded-2xl border border-stone-200">
+                  {STATUS_EMOJIS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, statusEmoji: emoji })}
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg transition-all cursor-pointer ${
+                        formData.statusEmoji === emoji
+                          ? 'bg-violet-600 text-white ring-2 ring-violet-400 shadow-xs scale-110'
+                          : 'bg-white hover:bg-violet-100 text-stone-800 border border-stone-200'
+                      }`}
+                      title={`Select ${emoji}`}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Status Short Text */}
               <div>
                 <label className="block text-[11px] font-bold text-stone-700 uppercase tracking-wider mb-1">
-                  Set About
+                  Status Text
                 </label>
                 <input
                   type="text"
-                  value={formData.about}
-                  onChange={(e) => setFormData({ ...formData, about: e.target.value })}
-                  placeholder="e.g. Available, Busy, At work..."
-                  required
+                  value={formData.statusText}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      statusText: e.target.value,
+                      about: e.target.value,
+                    })
+                  }
+                  placeholder="e.g. Available, Focusing on work, Loving life..."
                   className="w-full bg-stone-50 pl-3 pr-3 py-2 rounded-xl text-xs sm:text-sm text-stone-800 border border-stone-200 focus:outline-none focus:bg-white focus:border-violet-400 focus:ring-2 focus:ring-violet-200 font-medium"
                 />
 
-                {/* Quick About Presets to tap and set */}
-                <div className="mt-2">
-                  <span className="block text-[10px] font-semibold text-stone-400 mb-1.5">
-                    Or select a quick About:
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {ABOUT_PRESETS.map((preset) => (
-                      <button
-                        key={preset}
-                        type="button"
-                        onClick={() => handleSelectAboutPreset(preset)}
-                        className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer ${
-                          formData.about === preset
-                            ? 'bg-violet-600 text-white shadow-xs'
-                            : 'bg-stone-100 hover:bg-violet-100 text-stone-700 hover:text-violet-800 border border-stone-200'
-                        }`}
-                      >
-                        {preset}
-                      </button>
-                    ))}
-                  </div>
+                {/* Quick Presets */}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {ABOUT_PRESETS.map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() =>
+                        setFormData({
+                          ...formData,
+                          statusText: preset,
+                          about: preset,
+                        })
+                      }
+                      className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                        formData.statusText === preset
+                          ? 'bg-violet-600 text-white shadow-xs'
+                          : 'bg-stone-100 hover:bg-violet-100 text-stone-700 hover:text-violet-800 border border-stone-200'
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -412,7 +468,7 @@ export default function UserProfileModal({
                   type="submit"
                   className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 text-white font-bold text-xs transition-all shadow-md shadow-violet-500/25 cursor-pointer"
                 >
-                  Save Changes
+                  Save Status & Profile
                 </button>
                 <button
                   type="button"

@@ -20,9 +20,9 @@ export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUse
     }
   }, [isOpen]);
 
-  // Debounced search when user types email
+  // Debounced search when user types username
   useEffect(() => {
-    const q = searchQuery.trim();
+    const q = searchQuery.trim().replace(/^@/, '');
     if (!q) {
       setSearchResults([]);
       setHasSearched(false);
@@ -34,13 +34,13 @@ export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUse
       setIsSearching(true);
       setError('');
       try {
-        const results = await chatService.searchUsersByEmail(q, currentUser?.id);
+        const results = await chatService.searchUsers(q, currentUser?.id);
         // Exclude currently logged-in user from search results
-        const myEmail = (currentUser?.email || '').toLowerCase().trim();
+        const myUserId = (currentUser?.userId || currentUser?.name || '').toLowerCase().trim().replace(/^@/, '');
         const filtered = (results || []).filter(
           (u) =>
             u.id !== currentUser?.id &&
-            u.email?.toLowerCase().trim() !== myEmail
+            u.username?.toLowerCase().trim() !== myUserId
         );
         setSearchResults(filtered);
         setHasSearched(true);
@@ -52,7 +52,7 @@ export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUse
     }, 280);
 
     return () => clearTimeout(timer);
-  }, [searchQuery, currentUser?.id, currentUser?.email]);
+  }, [searchQuery, currentUser?.id, currentUser?.userId, currentUser?.name]);
 
   if (!isOpen) return null;
 
@@ -63,27 +63,29 @@ export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUse
     onClose();
   };
 
-  // Allow initiating chat with raw email if exact match isn't in profiles yet
-  const handleDirectEmailConnect = (e) => {
+  // Allow initiating chat with raw username handle
+  const handleDirectUsernameConnect = (e) => {
     e.preventDefault();
-    const cleanEmail = searchQuery.trim().toLowerCase();
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      setError('Please enter a valid email address.');
+    const cleanHandle = searchQuery.trim().toLowerCase().replace(/^@/, '');
+    if (!cleanHandle) {
+      setError('Please enter a username.');
       return;
     }
-    if (cleanEmail === (currentUser?.email || '').toLowerCase().trim()) {
+    const myUserId = (currentUser?.userId || currentUser?.name || '').toLowerCase().trim().replace(/^@/, '');
+    if (cleanHandle === myUserId) {
       setError('You cannot start a chat with yourself.');
       return;
     }
 
-    const defaultHandle = cleanEmail.split('@')[0];
     handleSelect({
       id: null,
-      name: defaultHandle,
-      userId: defaultHandle,
-      email: cleanEmail,
+      name: cleanHandle,
+      userId: cleanHandle,
+      username: cleanHandle,
       avatar_url: '',
-      about: 'Available 🌸',
+      status_emoji: '🌸',
+      status_text: 'Available',
+      about: 'Available',
     });
   };
 
@@ -98,7 +100,7 @@ export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUse
             </div>
             <div>
               <h2 className="text-lg font-bold">New Conversation</h2>
-              <p className="text-xs text-violet-100">Find registered users by email address 🌸</p>
+              <p className="text-xs text-violet-100">Find registered users by username</p>
             </div>
           </div>
           <button
@@ -111,7 +113,7 @@ export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUse
 
         {/* Search Input Bar */}
         <div className="p-4 border-b border-stone-100 flex-shrink-0">
-          <form onSubmit={handleDirectEmailConnect}>
+          <form onSubmit={handleDirectUsernameConnect}>
             <div className="relative flex items-center">
               <Search className="w-4 h-4 text-violet-500 absolute left-3.5 pointer-events-none" />
               <input
@@ -119,7 +121,7 @@ export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUse
                 autoFocus
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search registered user by email..."
+                placeholder="Search by username (e.g. keerthi)..."
                 className="w-full bg-stone-50 pl-10 pr-9 py-2.5 rounded-2xl text-xs sm:text-sm text-stone-800 placeholder:text-stone-400 border border-stone-200 focus:outline-none focus:bg-white focus:border-violet-400 focus:ring-2 focus:ring-violet-100 transition-all font-medium"
               />
               {searchQuery && (
@@ -173,14 +175,12 @@ export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUse
                     )}
                     <div className="min-w-0">
                       <p className="text-sm font-bold text-stone-900 group-hover:text-violet-950 truncate">
-                        @{((user.userId || user.username || user.name || user.email?.split('@')[0] || '')).replace(/^@/, '')}
+                        @{((user.userId || user.username || user.name || '')).replace(/^@/, '')}
                       </p>
-                      <p className="text-xs text-stone-500 truncate">{user.email}</p>
-                      {user.about && (
-                        <p className="text-[11px] text-stone-400 truncate mt-0.5">
-                          {user.about}
-                        </p>
-                      )}
+                      <p className="text-xs text-stone-500 truncate flex items-center gap-1 mt-0.5">
+                        <span>{user.status_emoji || '🌸'}</span>
+                        <span>{user.status_text || user.about || 'Available'}</span>
+                      </p>
                     </div>
                   </div>
 
@@ -199,22 +199,20 @@ export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUse
           {!isSearching && hasSearched && searchResults.length === 0 && (
             <div className="py-8 text-center px-4">
               <div className="w-12 h-12 rounded-full bg-violet-50 text-violet-600 flex items-center justify-center mx-auto mb-3">
-                <Mail className="w-6 h-6" />
+                <Search className="w-6 h-6" />
               </div>
               <p className="text-sm font-bold text-stone-800">No matching user found</p>
               <p className="text-xs text-stone-500 mt-1 max-w-xs mx-auto leading-relaxed">
-                No user registered with "{searchQuery}". You can invite them or connect directly.
+                No user registered with username "@{searchQuery.replace(/^@/, '')}".
               </p>
-              {searchQuery.includes('@') && (
-                <button
-                  type="button"
-                  onClick={handleDirectEmailConnect}
-                  className="mt-4 px-4 py-2 rounded-xl bg-violet-100 hover:bg-violet-200 text-violet-800 text-xs font-bold transition-all inline-flex items-center gap-1.5"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-violet-600" />
-                  <span>Start Chat with {searchQuery.trim()}</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleDirectUsernameConnect}
+                className="mt-4 px-4 py-2 rounded-xl bg-violet-100 hover:bg-violet-200 text-violet-800 text-xs font-bold transition-all inline-flex items-center gap-1.5"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-violet-600" />
+                <span>Start Chat with @{searchQuery.trim().replace(/^@/, '')}</span>
+              </button>
             </div>
           )}
 
@@ -222,7 +220,7 @@ export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUse
             <div className="py-10 text-center px-6 text-stone-400">
               <Search className="w-8 h-8 mx-auto mb-2 text-violet-300" />
               <p className="text-xs font-medium text-stone-500">
-                Type an email address above to find your friends on Bloom.
+                Type a username above to find your friends on Bloom.
               </p>
             </div>
           )}

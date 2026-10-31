@@ -4,6 +4,31 @@ import { supabase } from '../lib/supabaseClient.js';
  * Supabase Auth Service for Bloom
  */
 export const authService = {
+  // Check if a username is already taken (case-insensitive)
+  async checkUsernameAvailability(username) {
+    const clean = (username || '').toLowerCase().trim().replace(/^@/, '');
+    if (!clean) return { available: false, error: 'Username is required.' };
+
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, username, name')
+        .or(`username.ilike.${clean},name.ilike.${clean}`)
+        .limit(1);
+
+      if (!error && data && data.length > 0) {
+        return {
+          available: false,
+          error: `Username "@${clean}" is already taken. Please choose another username.`,
+        };
+      }
+    } catch (err) {
+      console.warn('checkUsernameAvailability notice:', err);
+    }
+
+    return { available: true };
+  },
+
   // Sign up with email & password
   async signUp(email, password, metadata = {}) {
     const { data, error } = await supabase.auth.signUp({

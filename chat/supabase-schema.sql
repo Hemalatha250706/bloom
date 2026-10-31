@@ -27,11 +27,18 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Ensure username column exists
+-- Ensure username column exists and backfill
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS username TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS status_emoji TEXT DEFAULT '🌸';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS status_text TEXT DEFAULT 'Available';
+UPDATE public.profiles SET username = LOWER(name) WHERE username IS NULL AND name IS NOT NULL;
 
--- Index on email for fast email search
+-- Enforce case-insensitive unique username constraint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_username_lower ON public.profiles (LOWER(username));
+
+-- Index on email and username for fast search
 CREATE INDEX IF NOT EXISTS idx_profiles_email ON public.profiles(email);
+CREATE INDEX IF NOT EXISTS idx_profiles_username ON public.profiles(username);
 
 -- Backfill any existing users from auth.users into public.profiles
 INSERT INTO public.profiles (id, name, email, avatar_url)
@@ -64,11 +71,22 @@ CREATE TABLE IF NOT EXISTS public.conversation_participants (
   conversation_id UUID NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   pinned BOOLEAN DEFAULT FALSE,
+  muted BOOLEAN DEFAULT FALSE,
+  is_hidden BOOLEAN DEFAULT FALSE,
+  hidden_at TIMESTAMPTZ,
   unread_count INT DEFAULT 0,
   last_read_at TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (conversation_id, user_id)
 );
+
+-- Ensure all participant columns exist
+ALTER TABLE public.conversation_participants ADD COLUMN IF NOT EXISTS pinned BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.conversation_participants ADD COLUMN IF NOT EXISTS muted BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.conversation_participants ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.conversation_participants ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMPTZ;
+ALTER TABLE public.conversation_participants ADD COLUMN IF NOT EXISTS unread_count INT DEFAULT 0;
+ALTER TABLE public.conversation_participants ADD COLUMN IF NOT EXISTS last_read_at TIMESTAMPTZ DEFAULT NOW();
 
 CREATE INDEX IF NOT EXISTS idx_participants_conv ON public.conversation_participants(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_participants_user ON public.conversation_participants(user_id);
@@ -82,7 +100,9 @@ CREATE TABLE IF NOT EXISTS public.messages (
   sender_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
   text TEXT,
   attachment JSONB, -- Stores { type: 'image' | 'file', name: '...', size: '...', url: '...' }
-  status TEXT DEFAULT 'delivered', -- 'sent' | 'delivered' | 'read'
+  status TEXT DEFAULT 'sent', -- 'sent' | 'delivered' | 'read'
+  read_at TIMESTAMPTZ,
+  delivered_at TIMESTAMPTZ,
   reaction TEXT, -- Emoji reaction e.g. '❤️', '🌸', '👍', '🔥'
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -91,7 +111,9 @@ CREATE TABLE IF NOT EXISTS public.messages (
 ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS conversation_id UUID REFERENCES public.conversations(id) ON DELETE CASCADE;
 ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS text TEXT;
 ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS attachment JSONB;
-ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'delivered';
+ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'sent';
+ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ;
+ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
 ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS reaction TEXT;
 
 -- Drop obsolete NOT NULL constraints if table previously had sender_id/receiver_id/content
@@ -107,6 +129,21 @@ END $$;
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON public.messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON public.messages(created_at);
+
+-- ==============================================================================
+-- 4B. MESSAGE REACTIONS TABLE (Per-user emoji reactions for messages)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.message_reactions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  message_id UUID NOT NULL REFERENCES public.messages(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  emoji TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (message_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON public.message_reactions(message_id);
+CREATE INDEX IF NOT EXISTS idx_message_reactions_user ON public.message_reactions(user_id);
 
 -- ==============================================================================
 -- 5. STATUSES & STORIES (Optional 24-hour stories feature)
@@ -144,16 +181,28 @@ CREATE TABLE IF NOT EXISTS public.status_likes (
 -- ==============================================================================
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
+DECLARE
+  user_handle TEXT;
 BEGIN
-  INSERT INTO public.profiles (id, name, email, avatar_url)
+  user_handle := LOWER(TRIM(COALESCE(
+    NEW.raw_user_meta_data->>'username',
+    NEW.raw_user_meta_data->>'name',
+    split_part(NEW.email, '@', 1)
+  )));
+
+  INSERT INTO public.profiles (id, name, username, email, avatar_url, status_emoji, status_text)
   VALUES (
     NEW.id,
-    COALESCE(NEW.raw_user_meta_data->>'name', split_part(NEW.email, '@', 1)),
+    user_handle,
+    user_handle,
     NEW.email,
-    NEW.raw_user_meta_data->>'avatar_url'
+    NEW.raw_user_meta_data->>'avatar_url',
+    '🌸',
+    'Available'
   )
   ON CONFLICT (id) DO UPDATE SET
     name = COALESCE(EXCLUDED.name, profiles.name),
+    username = COALESCE(EXCLUDED.username, profiles.username),
     email = EXCLUDED.email,
     avatar_url = COALESCE(EXCLUDED.avatar_url, profiles.avatar_url);
   RETURN NEW;
@@ -276,6 +325,18 @@ CREATE POLICY "Status likes viewable by all"
 CREATE POLICY "Users can like or unlike status" 
   ON public.status_likes FOR ALL USING (true);
 
+-- Message Reactions policies
+ALTER TABLE public.message_reactions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Reactions select" ON public.message_reactions;
+DROP POLICY IF EXISTS "Reactions insert" ON public.message_reactions;
+DROP POLICY IF EXISTS "Reactions update" ON public.message_reactions;
+DROP POLICY IF EXISTS "Reactions delete" ON public.message_reactions;
+
+CREATE POLICY "Reactions select" ON public.message_reactions FOR SELECT USING (true);
+CREATE POLICY "Reactions insert" ON public.message_reactions FOR INSERT WITH CHECK (true);
+CREATE POLICY "Reactions update" ON public.message_reactions FOR UPDATE USING (true);
+CREATE POLICY "Reactions delete" ON public.message_reactions FOR DELETE USING (true);
+
 -- ==============================================================================
 -- 8. ENABLE REALTIME PUBLICATION
 -- ==============================================================================
@@ -308,5 +369,12 @@ BEGIN
     WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'profiles'
   ) THEN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.profiles;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'message_reactions'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.message_reactions;
   END IF;
 END $$;
