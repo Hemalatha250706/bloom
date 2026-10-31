@@ -61,19 +61,30 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed?.user) {
+          const userMeta = parsed.user.user_metadata || {};
+          const cleanEmail = parsed.user.email || CURRENT_USER.email;
+          const userUid =
+            userMeta.userId ||
+            parsed.user.userId ||
+            cleanEmail.split('@')[0] ||
+            CURRENT_USER.userId ||
+            'user';
+
           return {
             ...CURRENT_USER,
             id: parsed.user.id || CURRENT_USER.id,
-            email: parsed.user.email || CURRENT_USER.email,
+            email: cleanEmail,
+            userId: userUid,
             phone:
-              parsed.user.user_metadata?.phone ||
+              userMeta.phone ||
               parsed.user.phone ||
               CURRENT_USER.phone ||
               '',
             name:
-              parsed.user.user_metadata?.name ||
-              parsed.user.email?.split('@')[0] ||
+              userMeta.name ||
+              cleanEmail.split('@')[0] ||
               CURRENT_USER.name,
+            avatar: userMeta.avatar || CURRENT_USER.avatar || '',
           };
         }
       }
@@ -83,10 +94,11 @@ export default function App() {
     return CURRENT_USER;
   });
 
-  // Real Presence Tracking State (Sets of active online IDs, emails, phones)
+  // Real Presence Tracking State (Sets of active online IDs, emails, usernames, phones)
   const [presenceState, setPresenceState] = useState({
     onlineUserIds: new Set(),
     onlineEmails: new Set(),
+    onlineUsernames: new Set(),
     onlinePhones: new Set(),
   });
 
@@ -179,19 +191,29 @@ export default function App() {
         if (session?.user) {
           setIsAuthenticated(true);
           setAuthenticatedUser(session.user);
+          const meta = session.user.user_metadata || {};
+          const cleanEmail = session.user.email || '';
+          const userUid =
+            meta.userId ||
+            session.user.userId ||
+            cleanEmail.split('@')[0] ||
+            'user';
+
           setCurrentUser((prev) => ({
             ...prev,
             id: session.user.id || prev.id,
-            email: session.user.email || prev.email,
+            email: cleanEmail || prev.email,
+            userId: userUid,
             phone:
-              session.user.user_metadata?.phone ||
+              meta.phone ||
               session.user.phone ||
               prev.phone ||
               '',
             name:
-              session.user.user_metadata?.name ||
-              session.user.email?.split('@')[0] ||
+              meta.name ||
+              cleanEmail.split('@')[0] ||
               prev.name,
+            avatar: meta.avatar || prev.avatar || '',
           }));
           localStorage.setItem(
             'bloom_auth_session',
@@ -206,19 +228,29 @@ export default function App() {
       if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
         setIsAuthenticated(true);
         setAuthenticatedUser(session.user);
+        const meta = session.user.user_metadata || {};
+        const cleanEmail = session.user.email || '';
+        const userUid =
+          meta.userId ||
+          session.user.userId ||
+          cleanEmail.split('@')[0] ||
+          'user';
+
         setCurrentUser((prev) => ({
           ...prev,
           id: session.user.id || prev.id,
-          email: session.user.email || prev.email,
+          email: cleanEmail || prev.email,
+          userId: userUid,
           phone:
-            session.user.user_metadata?.phone ||
+            meta.phone ||
             session.user.phone ||
             prev.phone ||
             '',
           name:
-            session.user.user_metadata?.name ||
-            session.user.email?.split('@')[0] ||
+            meta.name ||
+            cleanEmail.split('@')[0] ||
             prev.name,
+          avatar: meta.avatar || prev.avatar || '',
         }));
         localStorage.setItem(
           'bloom_auth_session',
@@ -278,8 +310,8 @@ export default function App() {
 
     // 2. Connect to Unified Real-Time Hub
     const cleanupHub = chatService.initRealtimeHub(currentUser, {
-      onPresenceChange: ({ onlineUserIds, onlineEmails }) => {
-        const newPresence = { onlineUserIds, onlineEmails };
+      onPresenceChange: ({ onlineUserIds, onlineEmails, onlineUsernames }) => {
+        const newPresence = { onlineUserIds, onlineEmails, onlineUsernames };
         setPresenceState(newPresence);
 
         setConversations((prev) =>
@@ -300,13 +332,18 @@ export default function App() {
         );
       },
       onMessageReceived: (incomingMsg, { isSender, isReceiver }) => {
-        const otherEmail = isSender ? incomingMsg.receiverEmail : incomingMsg.senderEmail;
-        const otherId = isSender ? incomingMsg.receiverId : incomingMsg.senderId;
+        // If sent by me, do not process as incoming message (stops self-bouncing chat)
+        if (isSender) return;
+
+        const otherEmail = incomingMsg.senderEmail?.toLowerCase().trim();
+        const otherUserId = (incomingMsg.senderUserId || '').toLowerCase().trim().replace(/^@/, '');
+        const otherId = incomingMsg.senderId;
 
         setConversations((prev) => {
           let targetConv = prev.find(
             (c) =>
-              (otherEmail && c.user.email?.toLowerCase() === otherEmail.toLowerCase()) ||
+              (otherUserId && c.user.userId?.toLowerCase().replace(/^@/, '') === otherUserId) ||
+              (otherEmail && c.user.email?.toLowerCase() === otherEmail) ||
               c.user.id === otherId ||
               c.id === otherId
           );
@@ -314,19 +351,21 @@ export default function App() {
           let updatedList;
           if (!targetConv) {
             // New contact started messaging in real time!
-            const contactEmail = otherEmail || incomingMsg.senderEmail || '';
+            const contactEmail = otherEmail || (otherUserId ? `${otherUserId}@bloom.chat` : '');
             const convId = contactEmail ? getEmailUuid(contactEmail) : otherId;
-            const isOnlineNow = isContactOnline({ id: convId, email: contactEmail }, presenceState);
+            const isOnlineNow = isContactOnline(
+              { id: convId, email: contactEmail, userId: otherUserId },
+              presenceState
+            );
 
             targetConv = {
               id: convId,
               user: {
                 id: convId,
-                name: incomingMsg.senderName || contactEmail.split('@')[0] || 'Bloom Contact 🌸',
+                name: incomingMsg.senderName || otherUserId || contactEmail.split('@')[0] || 'Contact',
+                userId: otherUserId,
                 email: contactEmail,
-                avatar:
-                  incomingMsg.senderAvatar ||
-                  'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=250&q=80',
+                avatar: incomingMsg.senderAvatar || '',
                 status: isOnlineNow ? 'online' : 'offline',
                 about: 'Available 🌸',
               },
@@ -434,12 +473,22 @@ export default function App() {
             JSON.stringify({ isAuthenticated: true, user })
           );
           if (user) {
+            const meta = user.user_metadata || {};
+            const cleanEmail = user.email || '';
+            const userUid =
+              meta.userId ||
+              user.userId ||
+              cleanEmail.split('@')[0] ||
+              'user';
+
             setCurrentUser((prev) => ({
               ...prev,
               id: user.id || prev.id,
-              email: user.email || prev.email,
-              phone: user.user_metadata?.phone || user.phone || prev.phone || '',
-              name: user.user_metadata?.name || user.email?.split('@')[0] || prev.name,
+              email: cleanEmail || prev.email,
+              userId: userUid,
+              phone: meta.phone || user.phone || prev.phone || '',
+              name: meta.name || cleanEmail.split('@')[0] || prev.name,
+              avatar: meta.avatar || prev.avatar || '',
             }));
           }
         }}
@@ -493,15 +542,33 @@ export default function App() {
     const nowTimestamp = Date.now();
     const newMsgId = `msg-${nowTimestamp}`;
     const myEmail = (currentUser.email || '').toLowerCase().trim();
+    const myUserId = (
+      currentUser.userId ||
+      currentUser.user_metadata?.userId ||
+      myEmail.split('@')[0] ||
+      ''
+    )
+      .toLowerCase()
+      .replace(/^@/, '');
+
     const targetEmail = (currentConv.user.email || '').toLowerCase().trim();
+    const targetUserId = (
+      currentConv.user.userId ||
+      targetEmail.split('@')[0] ||
+      ''
+    )
+      .toLowerCase()
+      .replace(/^@/, '');
 
     const newMessage = {
       id: newMsgId,
       senderId: currentUser.id || getEmailUuid(myEmail),
       senderEmail: myEmail,
-      senderName: currentUser.name || myEmail.split('@')[0],
+      senderUserId: myUserId,
+      senderName: currentUser.name || myUserId || myEmail.split('@')[0],
       receiverId: currentConv.user.id,
       receiverEmail: targetEmail,
+      receiverUserId: targetUserId,
       text: text || '',
       attachment: attachment || null,
       timestamp: timeString,
@@ -533,9 +600,11 @@ export default function App() {
       const saved = await chatService.sendMessage({
         senderId: currentUser.id || getEmailUuid(myEmail),
         senderEmail: myEmail,
-        senderName: currentUser.name || myEmail.split('@')[0],
+        senderUserId: myUserId,
+        senderName: currentUser.name || myUserId || myEmail.split('@')[0],
         receiverId: currentConv.user.id,
         receiverEmail: targetEmail,
+        receiverUserId: targetUserId,
         text: text || '',
         attachment,
         status: 'delivered',
@@ -563,19 +632,22 @@ export default function App() {
     }
   };
 
-  // Start a new chat or add contact via Email Address
+  // Start a new chat or save contact via User ID or Email Address
   const handleStartNewChat = (contactData) => {
-    const cleanEmail = (contactData.email || '').toLowerCase().trim();
-    if (!cleanEmail) return;
+    const rawEmail = (contactData.email || '').toLowerCase().trim();
+    const rawUserId = (contactData.userId || '').toLowerCase().trim().replace(/^@/, '');
 
+    if (!rawEmail && !rawUserId) return;
+
+    const cleanEmail = rawEmail || (rawUserId ? `${rawUserId}@bloom.chat` : '');
+    const cleanUserId = rawUserId || cleanEmail.split('@')[0];
     const contactUuid = getEmailUuid(cleanEmail);
 
-    // If chat already exists by ID or email, select it
+    // If chat already exists by ID, email or userId, select it
     const existing = conversations.find((c) => {
       if (c.id === contactUuid || c.user.id === contactUuid) return true;
-      if (c.user.email && c.user.email.toLowerCase() === cleanEmail) {
-        return true;
-      }
+      if (c.user.email && c.user.email.toLowerCase() === cleanEmail) return true;
+      if (c.user.userId && c.user.userId.toLowerCase().replace(/^@/, '') === cleanUserId) return true;
       return false;
     });
 
@@ -587,7 +659,7 @@ export default function App() {
 
     // Verify online status through presence: strictly offline unless actually logged in!
     const isOnlineNow = isContactOnline(
-      { id: contactUuid, email: cleanEmail },
+      { id: contactUuid, email: cleanEmail, userId: cleanUserId },
       presenceState
     );
 
@@ -595,10 +667,11 @@ export default function App() {
       id: contactUuid,
       user: {
         id: contactUuid,
-        name: contactData.name || cleanEmail.split('@')[0],
+        name: contactData.name || cleanUserId || cleanEmail.split('@')[0],
+        userId: cleanUserId,
         phone: '',
         email: cleanEmail,
-        avatar: contactData.avatar,
+        avatar: contactData.avatar || '',
         about: 'Available 🌸',
         status: isOnlineNow ? 'online' : 'offline', // NEVER fake online!
       },
@@ -640,6 +713,26 @@ export default function App() {
           });
         }
       });
+    }
+  };
+
+  // Delete a conversation & contact completely
+  const handleDeleteConversation = (convId, contactName) => {
+    const confirmDelete = window.confirm(
+      `Are you sure you want to delete conversation with ${contactName || 'this contact'}?`
+    );
+    if (!confirmDelete) return;
+
+    setConversations((prev) => {
+      const updated = prev.filter((c) => c.id !== convId);
+      chatService.saveConversationsToCache(currentUser.email || currentUser.id, updated);
+      chatService.saveMessagesToCache(convId, []);
+      return updated;
+    });
+
+    if (activeConversationId === convId) {
+      setActiveConversationId(null);
+      setShowMobileChat(false);
     }
   };
 
@@ -853,6 +946,7 @@ export default function App() {
                 activeConversationId={activeConversationId}
                 onSelectConversation={handleSelectConversation}
                 onTogglePin={handleTogglePin}
+                onDeleteConversation={handleDeleteConversation}
                 currentUser={currentUser}
                 onOpenNewChat={() => setIsNewChatOpen(true)}
               />
@@ -905,6 +999,12 @@ export default function App() {
                 onBackToList={() => setShowMobileChat(false)}
                 onOpenProfile={() => setProfileModalUser(activeConversation.user)}
                 onClearChat={handleClearChat}
+                onDeleteConversation={() =>
+                  handleDeleteConversation(
+                    activeConversation.id,
+                    activeConversation.user?.name
+                  )
+                }
                 onTriggerCall={handleTriggerCall}
                 isTyping={isTyping}
               />

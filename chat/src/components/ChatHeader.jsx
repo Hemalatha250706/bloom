@@ -18,6 +18,7 @@ export default function ChatHeader({
   onBackToList,
   onOpenProfile,
   onClearChat,
+  onDeleteConversation,
   onTriggerCall,
   isTyping,
 }) {
@@ -80,6 +81,11 @@ export default function ChatHeader({
             <h2 className="font-bold text-stone-900 text-sm sm:text-base leading-tight group-hover:text-violet-800 transition-colors">
               {activeUser.name}
             </h2>
+            {activeUser.userId && (
+              <span className="text-xs text-stone-400 font-normal">
+                @{activeUser.userId.replace(/^@/, '')}
+              </span>
+            )}
             {isPinned && (
               <button
                 type="button"
@@ -201,10 +207,21 @@ export default function ChatHeader({
                   setShowMenu(false);
                   onClearChat && onClearChat();
                 }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-stone-600 hover:bg-stone-50 transition-colors"
+              >
+                <Trash2 className="w-4 h-4 text-stone-500" />
+                <span>Clear Chat History</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowMenu(false);
+                  onDeleteConversation && onDeleteConversation();
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
               >
                 <Trash2 className="w-4 h-4 text-rose-500" />
-                <span>Clear Chat History</span>
+                <span>Delete Chat & Contact</span>
               </button>
             </div>
           )}

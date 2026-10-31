@@ -66,6 +66,7 @@ export default function AuthPage({ onLoginSuccess }) {
 
   // Sign Up States
   const [signupName, setSignupName] = useState('');
+  const [signupUserId, setSignupUserId] = useState('');
   const [signupEmail, setSignupEmail] = useState('');
   const [signupPhone, setSignupPhone] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
@@ -86,6 +87,7 @@ export default function AuthPage({ onLoginSuccess }) {
     setEmail('');
     setPassword('');
     setSignupName('');
+    setSignupUserId('');
     setSignupEmail('');
     setSignupPhone('');
     setSignupPassword('');
@@ -102,6 +104,7 @@ export default function AuthPage({ onLoginSuccess }) {
     setEmail('');
     setPassword('');
     setSignupName('');
+    setSignupUserId('');
     setSignupEmail('');
     setSignupPhone('');
     setSignupPassword('');
@@ -150,24 +153,54 @@ export default function AuthPage({ onLoginSuccess }) {
     if (errorMessage) setErrorMessage('');
   };
 
-  // Handle Login Submit (Supabase Auth)
+  // Handle Login Submit (Supabase Auth via Email or User ID)
   const handleLogin = async (e) => {
     e?.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
 
     if (!email.trim() || !password.trim()) {
-      setErrorMessage('Please fill in both email and password.');
+      setErrorMessage('Please fill in both email / User ID and password.');
       return;
     }
 
     setIsLoading(true);
-    const cleanEmail = email.trim().toLowerCase();
+    let rawInput = email.trim().toLowerCase().replace(/^@/, '');
+    let cleanEmail = rawInput;
+
+    // If User ID was entered (without @), lookup or map to email
+    if (!cleanEmail.includes('@')) {
+      try {
+        const dir = JSON.parse(localStorage.getItem('bloom_user_directory') || '{}');
+        if (dir[cleanEmail]) {
+          cleanEmail = dir[cleanEmail];
+        } else {
+          cleanEmail = `${cleanEmail}@bloom.chat`;
+        }
+      } catch (e) {
+        cleanEmail = `${cleanEmail}@bloom.chat`;
+      }
+    }
+
     try {
       const data = await authService.signIn(cleanEmail, password);
       setIsLoading(false);
       if (onLoginSuccess) {
-        onLoginSuccess(data?.user);
+        const userObj = data?.user || {};
+        const meta = userObj.user_metadata || {};
+        const resolvedUserId = meta.userId || rawInput.replace(/@.*$/, '') || cleanEmail.split('@')[0];
+        onLoginSuccess({
+          ...userObj,
+          id: userObj.id || getEmailUuid(cleanEmail),
+          email: userObj.email || cleanEmail,
+          userId: resolvedUserId,
+          name: meta.name || resolvedUserId,
+          user_metadata: {
+            ...meta,
+            userId: resolvedUserId,
+            name: meta.name || resolvedUserId,
+          },
+        });
       }
     } catch (err) {
       setIsLoading(false);
@@ -176,10 +209,13 @@ export default function AuthPage({ onLoginSuccess }) {
         err.code === 'email_not_confirmed' ||
         err.message?.toLowerCase().includes('email not confirmed')
       ) {
+        const resolvedUserId = rawInput.replace(/@.*$/, '') || cleanEmail.split('@')[0];
         const authed = {
           id: getEmailUuid(cleanEmail),
           email: cleanEmail,
-          user_metadata: { name: cleanEmail.split('@')[0] },
+          userId: resolvedUserId,
+          name: resolvedUserId,
+          user_metadata: { name: resolvedUserId, userId: resolvedUserId },
         };
         if (onLoginSuccess) {
           onLoginSuccess(authed);
@@ -190,7 +226,7 @@ export default function AuthPage({ onLoginSuccess }) {
     }
   };
 
-  // Handle Sign Up Submit (Supabase Auth Register)
+  // Handle Sign Up Submit (Supabase Auth Register with Custom User ID)
   const handleSignUp = async (e) => {
     e?.preventDefault();
     setErrorMessage('');
@@ -216,20 +252,44 @@ export default function AuthPage({ onLoginSuccess }) {
     setIsLoading(true);
     const cleanEmail = signupEmail.trim().toLowerCase();
     const cleanName = signupName.trim();
+    const cleanUserId = (signupUserId || cleanEmail.split('@')[0])
+      .toLowerCase()
+      .trim()
+      .replace(/^@/, '');
+
     try {
       const data = await authService.signUp(cleanEmail, signupPassword, {
         name: cleanName,
+        userId: cleanUserId,
         display_name: cleanName,
       });
       setIsLoading(false);
 
+      // Register into local directory
+      try {
+        const dir = JSON.parse(localStorage.getItem('bloom_user_directory') || '{}');
+        dir[cleanUserId] = cleanEmail;
+        localStorage.setItem('bloom_user_directory', JSON.stringify(dir));
+      } catch (e) {}
+
       const loggedInUser = data?.user || {
         id: getEmailUuid(cleanEmail),
         email: cleanEmail,
-        user_metadata: { name: cleanName },
+        userId: cleanUserId,
+        name: cleanName,
+        user_metadata: { name: cleanName, userId: cleanUserId },
       };
       if (onLoginSuccess) {
-        onLoginSuccess(loggedInUser);
+        onLoginSuccess({
+          ...loggedInUser,
+          userId: cleanUserId,
+          name: cleanName,
+          user_metadata: {
+            ...(loggedInUser.user_metadata || {}),
+            name: cleanName,
+            userId: cleanUserId,
+          },
+        });
       }
     } catch (err) {
       setIsLoading(false);
@@ -238,7 +298,9 @@ export default function AuthPage({ onLoginSuccess }) {
         const authed = {
           id: getEmailUuid(cleanEmail),
           email: cleanEmail,
-          user_metadata: { name: cleanName },
+          userId: cleanUserId,
+          name: cleanName,
+          user_metadata: { name: cleanName, userId: cleanUserId },
         };
         if (onLoginSuccess) {
           onLoginSuccess(authed);
@@ -466,11 +528,11 @@ export default function AuthPage({ onLoginSuccess }) {
             )}
 
             <form onSubmit={handleLogin} className="space-y-4" autoComplete="off">
-              {/* Email Field */}
+              {/* Email / User ID Field */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-xs font-bold text-stone-700">
-                    Email Address
+                    Email Address or User ID
                   </label>
                   {email && (
                     <button
@@ -485,12 +547,12 @@ export default function AuthPage({ onLoginSuccess }) {
                 <div className="relative flex items-center">
                   <Mail className="w-4 h-4 text-violet-400 absolute left-3.5 pointer-events-none" />
                   <input
-                    type="email"
+                    type="text"
                     name="bloom_user_email"
                     autoComplete="off"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="Enter your email"
+                    placeholder="Enter your email or User ID"
                     required
                     className="w-full bg-stone-50/80 pl-10 pr-9 py-2.5 rounded-xl text-xs sm:text-sm text-stone-800 placeholder:text-stone-400 border border-stone-200 focus:outline-none focus:bg-white focus:border-violet-400 focus:ring-2 focus:ring-violet-200 transition-all font-medium"
                   />
@@ -653,6 +715,33 @@ export default function AuthPage({ onLoginSuccess }) {
                     className="w-full bg-stone-50/80 pl-10 pr-4 py-2.5 rounded-xl text-xs sm:text-sm text-stone-800 placeholder:text-stone-400 border border-stone-200 focus:outline-none focus:bg-white focus:border-violet-400 focus:ring-2 focus:ring-violet-200 transition-all font-medium"
                   />
                 </div>
+              </div>
+
+              {/* Custom User ID (Username) */}
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">
+                  User ID (Username)
+                </label>
+                <div className="relative flex items-center">
+                  <span className="text-violet-400 font-bold absolute left-3.5 pointer-events-none text-sm select-none">
+                    @
+                  </span>
+                  <input
+                    type="text"
+                    name="bloom_new_userid"
+                    autoComplete="off"
+                    value={signupUserId}
+                    onChange={(e) =>
+                      setSignupUserId(e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, ''))
+                    }
+                    placeholder="e.g. keerthi, alex_24"
+                    required
+                    className="w-full bg-stone-50/80 pl-9 pr-4 py-2.5 rounded-xl text-xs sm:text-sm text-stone-800 placeholder:text-stone-400 border border-stone-200 focus:outline-none focus:bg-white focus:border-violet-400 focus:ring-2 focus:ring-violet-200 transition-all font-medium"
+                  />
+                </div>
+                <p className="text-[10px] text-stone-400 mt-0.5">
+                  Friends can search and message you using this User ID.
+                </p>
               </div>
 
               {/* Email Field */}

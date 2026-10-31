@@ -1,18 +1,9 @@
 import React, { useState } from 'react';
-import { X, UserPlus, Mail, User } from 'lucide-react';
-
-const AVATAR_PRESETS = [
-  'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=250&q=80',
-  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=250&q=80',
-  'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=250&q=80',
-  'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=250&q=80',
-  'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=250&q=80',
-];
+import { X, UserPlus, AtSign, User, UserCheck } from 'lucide-react';
 
 export default function NewChatModal({ isOpen, onClose, onStartChat }) {
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_PRESETS[0]);
+  const [identifier, setIdentifier] = useState('');
   const [error, setError] = useState('');
 
   if (!isOpen) return null;
@@ -22,31 +13,34 @@ export default function NewChatModal({ isOpen, onClose, onStartChat }) {
     setError('');
 
     const cleanName = name.trim();
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanId = identifier.trim().toLowerCase();
 
     if (!cleanName) {
       setError('Please enter contact name.');
       return;
     }
 
-    if (!cleanEmail) {
-      setError('Please enter an email address to connect.');
+    if (!cleanId) {
+      setError('Please enter a User ID or Email address.');
       return;
     }
 
-    if (!cleanEmail.includes('@') || !cleanEmail.includes('.')) {
-      setError('Please enter a valid email address (e.g. name@example.com).');
-      return;
-    }
+    // Determine if it is an email or a custom User ID
+    const isEmail = cleanId.includes('@') && cleanId.includes('.');
+    const cleanUserId = isEmail
+      ? cleanId.split('@')[0].replace(/^@/, '')
+      : cleanId.replace(/^@/, '');
+    const cleanEmail = isEmail ? cleanId : `${cleanUserId}@bloom.chat`;
 
     onStartChat({
       name: cleanName,
+      userId: cleanUserId,
       email: cleanEmail,
-      avatar: selectedAvatar,
+      avatar: '', // Custom avatar set by user or initials
     });
 
     setName('');
-    setEmail('');
+    setIdentifier('');
     setError('');
     onClose();
   };
@@ -61,8 +55,8 @@ export default function NewChatModal({ isOpen, onClose, onStartChat }) {
               <UserPlus className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-bold">Start a New Chat</h2>
-              <p className="text-xs text-violet-100">Connect via Email Address 🌸</p>
+              <h2 className="text-lg font-bold">New Chat & Contact</h2>
+              <p className="text-xs text-violet-100">Save contact via User ID or Email 🌸</p>
             </div>
           </div>
           <button
@@ -102,56 +96,29 @@ export default function NewChatModal({ isOpen, onClose, onStartChat }) {
             </div>
           </div>
 
-          {/* Contact by Email */}
+          {/* Contact User ID or Email */}
           <div>
             <label className="block text-xs font-semibold text-stone-700 mb-1.5 flex items-center gap-1">
-              <Mail className="w-3.5 h-3.5 text-violet-600" />
-              <span>Email Address *</span>
+              <AtSign className="w-3.5 h-3.5 text-violet-600" />
+              <span>User ID or Email *</span>
             </label>
             <div className="relative">
-              <Mail className="w-4 h-4 text-violet-400 absolute left-3 top-3 pointer-events-none" />
+              <AtSign className="w-4 h-4 text-violet-400 absolute left-3 top-3 pointer-events-none" />
               <input
-                type="email"
-                value={email}
+                type="text"
+                value={identifier}
                 onChange={(e) => {
-                  setEmail(e.target.value);
+                  setIdentifier(e.target.value);
                   setError('');
                 }}
-                placeholder="Enter email address"
+                placeholder="e.g. keerthi or user@bloom.chat"
                 required
                 className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-stone-200 text-sm focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 text-stone-800 font-medium"
               />
             </div>
             <p className="text-[11px] text-stone-400 mt-1">
-              Messages will be sent directly to this email account in real-time.
+              Enter their unique User ID or Email to start chatting immediately.
             </p>
-          </div>
-
-          {/* Choose Avatar */}
-          <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-2">
-              Choose Avatar
-            </label>
-            <div className="flex items-center gap-2.5">
-              {AVATAR_PRESETS.map((avUrl, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => setSelectedAvatar(avUrl)}
-                  className={`relative rounded-full transition-transform cursor-pointer ${
-                    selectedAvatar === avUrl
-                      ? 'scale-115 ring-3 ring-violet-500 shadow-sm'
-                      : 'opacity-70 hover:opacity-100'
-                  }`}
-                >
-                  <img
-                    src={avUrl}
-                    alt="avatar"
-                    className="w-10 h-10 rounded-full object-cover"
-                  />
-                </button>
-              ))}
-            </div>
           </div>
 
           {/* Actions */}
@@ -167,8 +134,8 @@ export default function NewChatModal({ isOpen, onClose, onStartChat }) {
               type="submit"
               className="px-5 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 rounded-xl shadow-md shadow-violet-500/20 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
             >
-              <UserPlus className="w-4 h-4" />
-              Start Chat
+              <UserCheck className="w-4 h-4" />
+              <span>Save & Start Chat</span>
             </button>
           </div>
         </form>

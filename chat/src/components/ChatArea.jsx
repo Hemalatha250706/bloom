@@ -83,29 +83,56 @@ export default function ChatArea({
             </div>
 
             {/* List of Messages */}
-            {msgs.map((msg) => (
-              <div key={msg.id} id={`msg-${msg.id}`}>
-                <MessageItem
-                  message={msg}
-                  isSender={msg.senderId === currentUser.id}
-                  senderUser={conversation.user}
-                  isPinned={msg.id === conversation.pinnedMessageId}
-                  onAddReaction={onAddReaction}
-                  onTogglePinMessage={onTogglePinMessage}
-                />
-              </div>
-            ))}
+            {msgs.map((msg) => {
+              const myEmail = (currentUser?.email || '').toLowerCase().trim();
+              const myUserId = (currentUser?.userId || currentUser?.user_metadata?.userId || '').toLowerCase().trim().replace(/^@/, '');
+              const msgSenderEmail = (msg.senderEmail || '').toLowerCase().trim();
+              const msgSenderUserId = (msg.senderUserId || '').toLowerCase().trim().replace(/^@/, '');
+
+              const isSender =
+                msg.senderId === currentUser?.id ||
+                (msgSenderEmail && myEmail && msgSenderEmail === myEmail) ||
+                (msgSenderUserId && myUserId && msgSenderUserId === myUserId);
+
+              return (
+                <div key={msg.id} id={`msg-${msg.id}`}>
+                  <MessageItem
+                    message={msg}
+                    isSender={isSender}
+                    senderUser={conversation.user}
+                    isPinned={msg.id === conversation.pinnedMessageId}
+                    onAddReaction={onAddReaction}
+                    onTogglePinMessage={onTogglePinMessage}
+                  />
+                </div>
+              );
+            })}
           </div>
         ))}
+
+        {/* Offline notice when contact is offline */}
+        {conversation?.user?.status !== 'online' && (
+          <div className="flex items-center justify-center pt-2 pb-1">
+            <span className="px-3.5 py-1 rounded-full text-[11px] font-medium bg-stone-100 text-stone-500 border border-stone-200 shadow-2xs">
+              {conversation?.user?.name || 'Contact'} is currently offline. Messages will be delivered when online.
+            </span>
+          </div>
+        )}
 
         {/* Typing indicator bubble */}
         {isTyping && (
           <div className="flex items-center gap-2.5 mb-3">
-            <img
-              src={conversation.user.avatar}
-              alt={conversation.user.name}
-              className="w-8 h-8 rounded-full object-cover ring-2 ring-violet-200 shadow-xs"
-            />
+            {conversation.user.avatar ? (
+              <img
+                src={conversation.user.avatar}
+                alt={conversation.user.name}
+                className="w-8 h-8 rounded-full object-cover ring-2 ring-violet-200 shadow-xs"
+              />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-violet-500 to-indigo-600 text-white font-bold text-xs flex items-center justify-center ring-2 ring-violet-200 shadow-xs">
+                {conversation.user.name?.slice(0, 2).toUpperCase() || 'U'}
+              </div>
+            )}
             <div className="px-4 py-3 rounded-2xl rounded-bl-xs bg-white border border-violet-100 shadow-sm flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-violet-500 animate-bounce" />
               <span className="w-2 h-2 rounded-full bg-violet-500 animate-bounce [animation-delay:0.2s]" />

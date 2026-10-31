@@ -157,7 +157,15 @@ export function isContactOnline(contactUser, presenceState) {
     }
   }
 
-  // 2. Check User UUID or Email Hash UUID
+  // 2. Check Custom User ID / Username
+  if (contactUser.userId && presenceState.onlineUsernames) {
+    const cleanUid = contactUser.userId.toLowerCase().trim().replace(/^@/, '');
+    if (cleanUid && presenceState.onlineUsernames.has(cleanUid)) {
+      return true;
+    }
+  }
+
+  // 3. Check User UUID or Email Hash UUID
   if (contactUser.id && onlineUserIds) {
     const lowerId = String(contactUser.id).toLowerCase();
     if (onlineUserIds.has(lowerId)) return true;
@@ -321,6 +329,7 @@ export const chatService = {
         const state = channel.presenceState();
         const onlineUserIds = new Set();
         const onlineEmails = new Set();
+        const onlineUsernames = new Set();
 
         Object.values(state).forEach((presences) => {
           if (Array.isArray(presences)) {
@@ -328,34 +337,60 @@ export const chatService = {
               if (p.user_id) onlineUserIds.add(String(p.user_id).toLowerCase());
               if (p.email_uuid) onlineUserIds.add(String(p.email_uuid).toLowerCase());
               if (p.email) onlineEmails.add(String(p.email).toLowerCase().trim());
+              if (p.userId) onlineUsernames.add(String(p.userId).toLowerCase().trim().replace(/^@/, ''));
             });
           }
         });
 
         if (typeof onPresenceChange === 'function') {
-          onPresenceChange({ onlineUserIds, onlineEmails });
+          onPresenceChange({ onlineUserIds, onlineEmails, onlineUsernames });
         }
       })
       // B) Instant Direct Chat Message Broadcast (Bypasses any DB/RLS permission barriers)
       .on('broadcast', { event: 'bloom_message' }, ({ payload }) => {
         if (!payload) return;
-        const targetReceiverEmail = payload.receiverEmail?.toLowerCase().trim();
-        const targetSenderEmail = payload.senderEmail?.toLowerCase().trim();
         const myEmail = cleanEmail;
+        const myUserId = (
+          currentUser.userId ||
+          currentUser.user_metadata?.userId ||
+          cleanEmail.split('@')[0] ||
+          ''
+        )
+          .toLowerCase()
+          .replace(/^@/, '');
 
-        const isReceiver =
-          targetReceiverEmail === myEmail ||
-          payload.receiverId?.toLowerCase() === emailUuid.toLowerCase() ||
-          payload.receiverId?.toLowerCase() === userUuid.toLowerCase();
+        const targetSenderEmail = payload.senderEmail?.toLowerCase().trim();
+        const targetSenderUserId = (payload.senderUserId || '')
+          .toLowerCase()
+          .trim()
+          .replace(/^@/, '');
 
         const isSender =
-          targetSenderEmail === myEmail ||
+          (targetSenderEmail && targetSenderEmail === myEmail) ||
+          (targetSenderUserId && targetSenderUserId === myUserId) ||
           payload.senderId?.toLowerCase() === emailUuid.toLowerCase() ||
           payload.senderId?.toLowerCase() === userUuid.toLowerCase();
 
-        if (isReceiver || isSender) {
+        // CRITICAL FIX: If message was sent by me, NEVER process as incoming! (Eliminates self-bouncing chat)
+        if (isSender) {
+          return;
+        }
+
+        const targetReceiverEmail = payload.receiverEmail?.toLowerCase().trim();
+        const targetReceiverUserId = (payload.receiverUserId || '')
+          .toLowerCase()
+          .trim()
+          .replace(/^@/, '');
+
+        const isReceiver =
+          (targetReceiverEmail && targetReceiverEmail === myEmail) ||
+          (targetReceiverUserId && targetReceiverUserId === myUserId) ||
+          payload.receiverId?.toLowerCase() === emailUuid.toLowerCase() ||
+          payload.receiverId?.toLowerCase() === userUuid.toLowerCase();
+
+        if (isReceiver) {
           if (typeof onMessageReceived === 'function') {
-            onMessageReceived(payload, { isSender, isReceiver });
+            onMessageReceived(payload, { isSender: false, isReceiver: true });
           }
         }
       })
@@ -388,30 +423,43 @@ export const chatService = {
           const targetSenderEmail = mapped.senderEmail?.toLowerCase().trim();
           const myEmail = cleanEmail;
 
-          const isReceiver =
-            targetReceiverEmail === myEmail ||
-            mapped.receiverId?.toLowerCase() === emailUuid.toLowerCase() ||
-            mapped.receiverId?.toLowerCase() === userUuid.toLowerCase();
-
           const isSender =
             targetSenderEmail === myEmail ||
             mapped.senderId?.toLowerCase() === emailUuid.toLowerCase() ||
             mapped.senderId?.toLowerCase() === userUuid.toLowerCase();
 
-          if (isReceiver || isSender) {
+          // CRITICAL: Prevent self-bounce of my own inserted message
+          if (isSender) return;
+
+          const isReceiver =
+            targetReceiverEmail === myEmail ||
+            mapped.receiverId?.toLowerCase() === emailUuid.toLowerCase() ||
+            mapped.receiverId?.toLowerCase() === userUuid.toLowerCase();
+
+          if (isReceiver) {
             if (typeof onMessageReceived === 'function') {
-              onMessageReceived(mapped, { isSender, isReceiver });
+              onMessageReceived(mapped, { isSender: false, isReceiver: true });
             }
           }
         }
       )
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
+          const myUserId = (
+            currentUser.userId ||
+            currentUser.user_metadata?.userId ||
+            cleanEmail.split('@')[0] ||
+            ''
+          )
+            .toLowerCase()
+            .replace(/^@/, '');
+
           await channel.track({
             user_id: userUuid,
             email_uuid: emailUuid,
             email: cleanEmail,
-            name: currentUser.name || cleanEmail.split('@')[0],
+            userId: myUserId,
+            name: currentUser.name || myUserId || cleanEmail.split('@')[0],
             avatar: currentUser.avatar || '',
             online_at: new Date().toISOString(),
           });
@@ -511,9 +559,11 @@ export const chatService = {
   async sendMessage({
     senderId,
     senderEmail,
+    senderUserId,
     senderName,
     receiverId,
     receiverEmail,
+    receiverUserId,
     text,
     attachment,
     status = 'delivered',
@@ -521,14 +571,16 @@ export const chatService = {
   }) {
     const cleanSenderEmail = (senderEmail || '').toLowerCase().trim();
     const cleanReceiverEmail = (receiverEmail || '').toLowerCase().trim();
+    const cleanSenderUserId = (senderUserId || '').toLowerCase().trim().replace(/^@/, '');
+    const cleanReceiverUserId = (receiverUserId || '').toLowerCase().trim().replace(/^@/, '');
 
     const senderUuid = cleanSenderEmail
       ? getEmailUuid(cleanSenderEmail)
-      : stringToUuid(senderId);
+      : stringToUuid(cleanSenderUserId || senderId);
 
     const receiverUuid = cleanReceiverEmail
       ? getEmailUuid(cleanReceiverEmail)
-      : stringToUuid(receiverId);
+      : stringToUuid(cleanReceiverUserId || receiverId);
 
     const now = new Date();
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -537,9 +589,11 @@ export const chatService = {
       id: messageId,
       senderId: senderUuid,
       senderEmail: cleanSenderEmail,
-      senderName: senderName || cleanSenderEmail.split('@')[0],
+      senderUserId: cleanSenderUserId,
+      senderName: senderName || cleanSenderUserId || cleanSenderEmail.split('@')[0],
       receiverId: receiverUuid,
       receiverEmail: cleanReceiverEmail,
+      receiverUserId: cleanReceiverUserId,
       text: text || '',
       attachment: attachment || null,
       status,

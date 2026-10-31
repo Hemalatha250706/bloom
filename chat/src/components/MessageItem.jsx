@@ -64,11 +64,17 @@ export default function MessageItem({
       >
         {/* Contact avatar for received messages */}
         {!isSender && (
-          <img
-            src={senderUser?.avatar}
-            alt={senderUser?.name}
-            className="w-8 h-8 rounded-full object-cover ring-2 ring-violet-200 mb-1 flex-shrink-0 shadow-xs"
-          />
+          senderUser?.avatar ? (
+            <img
+              src={senderUser.avatar}
+              alt={senderUser?.name}
+              className="w-8 h-8 rounded-full object-cover ring-2 ring-violet-200 mb-1 flex-shrink-0 shadow-xs"
+            />
+          ) : (
+            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-violet-500 to-indigo-600 text-white font-bold text-xs flex items-center justify-center ring-2 ring-violet-200 mb-1 flex-shrink-0 shadow-xs">
+              {senderUser?.name?.slice(0, 2).toUpperCase() || 'U'}
+            </div>
+          )
         )}
 
         {/* Message Bubble Container */}

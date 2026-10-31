@@ -2,12 +2,13 @@
 
 export const CURRENT_USER = {
   id: 'current_user',
-  name: 'Chloe Vance',
+  name: 'User',
+  userId: 'user',
   about: 'Available 🌸',
-  avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=250&q=80',
+  avatar: '',
   status: 'online',
-  email: 'chloe.vance@bloom.chat',
-  phone: '+1 (555) 234-5678',
+  email: 'user@bloom.chat',
+  phone: '',
 };
 
 export const ABOUT_PRESETS = [

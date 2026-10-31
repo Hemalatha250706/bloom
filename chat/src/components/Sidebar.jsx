@@ -5,6 +5,7 @@ import {
   Pin,
   PinOff,
   UserPlus,
+  Trash2,
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -12,6 +13,7 @@ export default function Sidebar({
   activeConversationId,
   onSelectConversation,
   onTogglePin,
+  onDeleteConversation,
   currentUser,
   onOpenNewChat,
 }) {
@@ -186,6 +188,11 @@ export default function Sidebar({
                       >
                         {conv.user.name}
                       </span>
+                      {conv.user.userId && (
+                        <span className="text-[11px] text-stone-400 font-normal">
+                          @{conv.user.userId.replace(/^@/, '')}
+                        </span>
+                      )}
                       {/* Pin / Unpin Button */}
                       <button
                         type="button"
@@ -205,6 +212,19 @@ export default function Sidebar({
                         ) : (
                           <Pin className="w-3.5 h-3.5" />
                         )}
+                      </button>
+
+                      {/* Delete Chat Button */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteConversation && onDeleteConversation(conv.id, conv.user.name);
+                        }}
+                        className="p-1 rounded-md opacity-0 group-hover:opacity-100 text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition-all cursor-pointer flex-shrink-0"
+                        title={`Delete chat with ${conv.user.name}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                     <span
