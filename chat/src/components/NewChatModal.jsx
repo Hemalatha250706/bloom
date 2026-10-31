@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { X, UserPlus, Sparkles, Mail, Phone, User, Smartphone } from 'lucide-react';
-import { cleanPhoneNumber } from '../services/chatService';
+import { X, UserPlus, Mail, User } from 'lucide-react';
 
 const AVATAR_PRESETS = [
   'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=250&q=80',
@@ -10,11 +9,8 @@ const AVATAR_PRESETS = [
   'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=250&q=80',
 ];
 
-const QUICK_NAMES = ['Amma 🌸', 'Appa 🌿', 'Friend 💜', 'Work 💼', 'Family 🏡'];
-
 export default function NewChatModal({ isOpen, onClose, onStartChat }) {
   const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_PRESETS[0]);
   const [error, setError] = useState('');
@@ -26,46 +22,33 @@ export default function NewChatModal({ isOpen, onClose, onStartChat }) {
     setError('');
 
     const cleanName = name.trim();
-    const cleanPhone = cleanPhoneNumber(phone.trim());
-    const cleanEmail = email.trim();
+    const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanName) {
       setError('Please enter contact name.');
       return;
     }
 
-    if (!cleanPhone && !cleanEmail) {
-      setError('Please provide either a Mobile Number or Email address to connect.');
+    if (!cleanEmail) {
+      setError('Please enter an email address to connect.');
       return;
     }
 
-    if (cleanPhone && cleanPhone.replace(/\D/g, '').length < 7) {
-      setError('Please enter a valid mobile number (at least 7 to 15 digits).');
-      return;
-    }
-
-    if (cleanEmail && (!cleanEmail.includes('@') || !cleanEmail.includes('.'))) {
-      setError('Please enter a valid email address.');
+    if (!cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+      setError('Please enter a valid email address (e.g. name@example.com).');
       return;
     }
 
     onStartChat({
       name: cleanName,
-      phone: cleanPhone,
       email: cleanEmail,
       avatar: selectedAvatar,
     });
 
     setName('');
-    setPhone('');
     setEmail('');
     setError('');
     onClose();
-  };
-
-  const handleSelectNamePreset = (presetName) => {
-    setName(presetName);
-    setError('');
   };
 
   return (
@@ -79,7 +62,7 @@ export default function NewChatModal({ isOpen, onClose, onStartChat }) {
             </div>
             <div>
               <h2 className="text-lg font-bold">Start a New Chat</h2>
-              <p className="text-xs text-violet-100">Connect via Mobile Number or Email 🌸</p>
+              <p className="text-xs text-violet-100">Connect via Email Address 🌸</p>
             </div>
           </div>
           <button
@@ -98,30 +81,6 @@ export default function NewChatModal({ isOpen, onClose, onStartChat }) {
             </div>
           )}
 
-          {/* Quick Name Suggestions */}
-          <div>
-            <label className="block text-xs font-semibold text-stone-500 uppercase tracking-wider mb-2">
-              Quick Contact Name
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {QUICK_NAMES.map((qName) => (
-                <button
-                  key={qName}
-                  type="button"
-                  onClick={() => handleSelectNamePreset(qName)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
-                    name === qName
-                      ? 'bg-violet-600 text-white shadow-xs'
-                      : 'bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200/80'
-                  }`}
-                >
-                  <Sparkles className="w-3 h-3 text-violet-400" />
-                  {qName}
-                </button>
-              ))}
-            </div>
-          </div>
-
           {/* Contact Name */}
           <div>
             <label className="block text-xs font-semibold text-stone-700 mb-1.5">
@@ -136,34 +95,8 @@ export default function NewChatModal({ isOpen, onClose, onStartChat }) {
                   setName(e.target.value);
                   setError('');
                 }}
-                placeholder="e.g. Amma, Friend, Priya"
+                placeholder="Name"
                 required
-                className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-stone-200 text-sm focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 text-stone-800 font-medium"
-              />
-            </div>
-          </div>
-
-          {/* Contact by Mobile Number */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-xs font-semibold text-stone-700 flex items-center gap-1">
-                <Smartphone className="w-3.5 h-3.5 text-violet-600" />
-                <span>Mobile Number</span>
-              </label>
-              <span className="text-[11px] text-violet-600 font-semibold bg-violet-50 px-2 py-0.5 rounded-full">
-                Recommended
-              </span>
-            </div>
-            <div className="relative">
-              <Phone className="w-4 h-4 text-violet-400 absolute left-3 top-3 pointer-events-none" />
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => {
-                  setPhone(e.target.value);
-                  setError('');
-                }}
-                placeholder="e.g. +91 98765 43210 or 9876543210"
                 className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-stone-200 text-sm focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 text-stone-800 font-medium"
               />
             </div>
@@ -173,7 +106,7 @@ export default function NewChatModal({ isOpen, onClose, onStartChat }) {
           <div>
             <label className="block text-xs font-semibold text-stone-700 mb-1.5 flex items-center gap-1">
               <Mail className="w-3.5 h-3.5 text-violet-600" />
-              <span>Email Address</span>
+              <span>Email Address *</span>
             </label>
             <div className="relative">
               <Mail className="w-4 h-4 text-violet-400 absolute left-3 top-3 pointer-events-none" />
@@ -184,12 +117,13 @@ export default function NewChatModal({ isOpen, onClose, onStartChat }) {
                   setEmail(e.target.value);
                   setError('');
                 }}
-                placeholder="e.g. contact@gmail.com"
+                placeholder="Enter email address"
+                required
                 className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-stone-200 text-sm focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 text-stone-800 font-medium"
               />
             </div>
             <p className="text-[11px] text-stone-400 mt-1">
-              Enter either Mobile Number or Email (or both).
+              Messages will be sent directly to this email account in real-time.
             </p>
           </div>
 

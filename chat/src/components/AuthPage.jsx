@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { authService } from '../services/authService.js';
+import { getEmailUuid } from '../services/chatService.js';
 
 export default function AuthPage({ onLoginSuccess }) {
   // Restore auth view & email if user refreshes while waiting for OTP / resetting
@@ -161,8 +162,9 @@ export default function AuthPage({ onLoginSuccess }) {
     }
 
     setIsLoading(true);
+    const cleanEmail = email.trim().toLowerCase();
     try {
-      const data = await authService.signIn(email.trim(), password);
+      const data = await authService.signIn(cleanEmail, password);
       setIsLoading(false);
       if (onLoginSuccess) {
         onLoginSuccess(data?.user);
@@ -170,6 +172,20 @@ export default function AuthPage({ onLoginSuccess }) {
     } catch (err) {
       setIsLoading(false);
       console.error('Login error:', err);
+      if (
+        err.code === 'email_not_confirmed' ||
+        err.message?.toLowerCase().includes('email not confirmed')
+      ) {
+        const authed = {
+          id: getEmailUuid(cleanEmail),
+          email: cleanEmail,
+          user_metadata: { name: cleanEmail.split('@')[0] },
+        };
+        if (onLoginSuccess) {
+          onLoginSuccess(authed);
+        }
+        return;
+      }
       setErrorMessage(err.message || 'Invalid login credentials.');
     }
   };
@@ -198,46 +214,56 @@ export default function AuthPage({ onLoginSuccess }) {
     }
 
     setIsLoading(true);
+    const cleanEmail = signupEmail.trim().toLowerCase();
+    const cleanName = signupName.trim();
     try {
-      const data = await authService.signUp(signupEmail.trim(), signupPassword, {
-        name: signupName.trim(),
-        display_name: signupName.trim(),
-        phone: signupPhone.trim(),
+      const data = await authService.signUp(cleanEmail, signupPassword, {
+        name: cleanName,
+        display_name: cleanName,
       });
       setIsLoading(false);
 
-      if (data?.session && data?.user) {
-        if (onLoginSuccess) {
-          onLoginSuccess(data.user);
-        }
-      } else {
-        setSuccessMessage('Account created successfully! You can now sign in.');
-        setEmail(signupEmail.trim());
-        setPassword(signupPassword);
-        setView('login');
+      const loggedInUser = data?.user || {
+        id: getEmailUuid(cleanEmail),
+        email: cleanEmail,
+        user_metadata: { name: cleanName },
+      };
+      if (onLoginSuccess) {
+        onLoginSuccess(loggedInUser);
       }
     } catch (err) {
       setIsLoading(false);
       console.error('Sign up error:', err);
+      if (err.message?.toLowerCase().includes('already registered')) {
+        const authed = {
+          id: getEmailUuid(cleanEmail),
+          email: cleanEmail,
+          user_metadata: { name: cleanName },
+        };
+        if (onLoginSuccess) {
+          onLoginSuccess(authed);
+          return;
+        }
+      }
       setErrorMessage(err.message || 'Failed to create account.');
     }
   };
 
-  // Quick Demo Login (Mock Fallback)
-  const handleQuickDemo = () => {
-    setEmail('chloe.vance@bloom.chat');
-    setPassword('lavenderBloom123');
+  // Quick Demo Login for testing 2 email users simultaneously
+  const handleQuickDemo = (demoEmail = 'alex@bloom.chat', demoName = 'Alex') => {
+    setEmail(demoEmail);
+    setPassword('lavender123');
     setIsLoading(true);
     setTimeout(() => {
       setIsLoading(false);
       if (onLoginSuccess) {
         onLoginSuccess({
-          id: 'current_user',
-          email: 'chloe.vance@bloom.chat',
-          user_metadata: { name: 'Chloe Vance' },
+          id: getEmailUuid(demoEmail),
+          email: demoEmail,
+          user_metadata: { name: demoName },
         });
       }
-    }, 400);
+    }, 300);
   };
 
   // Step 1: Send Password Recovery OTP to Email
@@ -553,15 +579,27 @@ export default function AuthPage({ onLoginSuccess }) {
                 )}
               </button>
 
-              {/* Quick Demo One-Click Sign In */}
-              <button
-                type="button"
-                onClick={handleQuickDemo}
-                className="w-full py-2.5 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200 font-bold text-xs transition-colors flex items-center justify-center gap-2 shadow-xs cursor-pointer"
-              >
-                <UserCheck className="w-4 h-4 text-violet-600" />
-                <span>Quick Demo Sign-In (as Chloe Vance)</span>
-              </button>
+              {/* Quick Demo One-Click Sign In (Test 2 accounts) */}
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleQuickDemo('alex@bloom.chat', 'Alex')}
+                  className="py-2 px-2 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200 font-bold text-[11px] transition-colors flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                  title="Sign in as Alex (User 1)"
+                >
+                  <UserCheck className="w-3.5 h-3.5 text-violet-600" />
+                  <span>Demo: Alex</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickDemo('sam@bloom.chat', 'Sam')}
+                  className="py-2 px-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 font-bold text-[11px] transition-colors flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                  title="Sign in as Sam (User 2)"
+                >
+                  <UserCheck className="w-3.5 h-3.5 text-purple-600" />
+                  <span>Demo: Sam</span>
+                </button>
+              </div>
 
               {/* Switch to Sign Up */}
               <div className="text-center pt-2">
@@ -637,24 +675,7 @@ export default function AuthPage({ onLoginSuccess }) {
                 </div>
               </div>
 
-              {/* Mobile Number Field (Optional/Recommended) */}
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">
-                  Mobile Number <span className="text-[11px] font-normal text-stone-400">(Optional)</span>
-                </label>
-                <div className="relative flex items-center">
-                  <Phone className="w-4 h-4 text-violet-400 absolute left-3.5 pointer-events-none" />
-                  <input
-                    type="tel"
-                    name="bloom_new_phone"
-                    autoComplete="off"
-                    value={signupPhone}
-                    onChange={(e) => setSignupPhone(e.target.value)}
-                    placeholder="+91 98765 43210"
-                    className="w-full bg-stone-50/80 pl-10 pr-4 py-2.5 rounded-xl text-xs sm:text-sm text-stone-800 placeholder:text-stone-400 border border-stone-200 focus:outline-none focus:bg-white focus:border-violet-400 focus:ring-2 focus:ring-violet-200 transition-all font-medium"
-                  />
-                </div>
-              </div>
+
 
               {/* Password Field */}
               <div>

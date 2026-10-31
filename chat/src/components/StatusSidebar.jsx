@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Camera, ChevronDown, ChevronRight, Eye, Heart } from 'lucide-react';
+import { Plus, Camera, ChevronDown, ChevronRight, Eye, Sparkles } from 'lucide-react';
 
 export default function StatusSidebar({
   currentUser,
@@ -13,6 +13,10 @@ export default function StatusSidebar({
 }) {
   const [showViewed, setShowViewed] = useState(true);
   const hasMyStatus = myStatuses.length > 0;
+  const myTotalViews = myStatuses.reduce(
+    (acc, st) => acc + (st.viewers?.length || 0),
+    0
+  );
 
   const recentStatuses = contactStatuses.filter(
     (st) => !viewedStatusIds.includes(st.id)
@@ -23,7 +27,7 @@ export default function StatusSidebar({
 
   return (
     <div className="w-full h-full flex flex-col min-h-0 bg-white/95 select-none">
-      {/* 1. Header with Camera #1 and Add Button */}
+      {/* 1. Header with Camera and Add Button */}
       <div className="p-3.5 pb-2.5 flex items-center justify-between border-b border-violet-100/70 flex-shrink-0">
         <div>
           <h2 className="font-extrabold text-lg text-stone-900 tracking-tight">
@@ -33,7 +37,7 @@ export default function StatusSidebar({
         </div>
 
         <div className="flex items-center gap-1.5">
-          {/* Quick Camera (Camera #1 of 2) */}
+          {/* Quick Camera */}
           <button
             type="button"
             onClick={onOpenLiveCamera}
@@ -56,9 +60,9 @@ export default function StatusSidebar({
         </div>
       </div>
 
-      {/* 2. Single Clean Scrollable Status List (Zero duplicates!) */}
+      {/* 2. Scrollable Status List */}
       <div className="flex-1 overflow-y-auto px-2.5 py-3 space-y-3.5 min-h-0">
-        {/* My Status (Single Entry at top) */}
+        {/* My Status */}
         <div
           onClick={() => {
             if (hasMyStatus) onOpenMyStatus();
@@ -104,14 +108,14 @@ export default function StatusSidebar({
               {hasMyStatus && (
                 <span className="text-[10px] text-violet-700 font-bold flex items-center gap-0.5 bg-violet-100 px-1.5 py-0.5 rounded-full">
                   <Eye className="w-2.5 h-2.5 text-violet-600" />
-                  24 views
+                  {myTotalViews} {myTotalViews === 1 ? 'view' : 'views'}
                 </span>
               )}
             </div>
           </div>
         </div>
 
-        {/* Recent Updates Section (Each contact appears ONCE) */}
+        {/* Recent Updates Section */}
         {recentStatuses.length > 0 && (
           <div>
             <span className="block text-[10px] font-bold text-stone-400 uppercase tracking-wider px-1 mb-1.5">
@@ -124,14 +128,19 @@ export default function StatusSidebar({
                   onClick={() => onOpenContactStatus(st)}
                   className="p-2 rounded-xl hover:bg-stone-50 flex items-center gap-3 cursor-pointer transition-colors group"
                 >
-                  {/* Compact Story Ring */}
                   <div className="w-11 h-11 rounded-full p-0.5 bg-gradient-to-tr from-violet-600 via-fuchsia-500 to-indigo-500 shadow-2xs flex-shrink-0 group-hover:scale-105 transition-transform">
                     <div className="w-full h-full rounded-full overflow-hidden bg-white p-0.5">
-                      <img
-                        src={st.userAvatar}
-                        alt={st.userName}
-                        className="w-full h-full object-cover rounded-full"
-                      />
+                      {st.userAvatar ? (
+                        <img
+                          src={st.userAvatar}
+                          alt={st.userName}
+                          className="w-full h-full object-cover rounded-full"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-violet-100 text-violet-700 font-bold text-xs flex items-center justify-center">
+                          {st.userName?.slice(0, 2).toUpperCase() || 'ST'}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -141,12 +150,12 @@ export default function StatusSidebar({
                         {st.userName}
                       </h4>
                       <span className="text-[10px] text-stone-400 font-medium ml-1">
-                        {st.timestamp}
+                        {st.timestamp || 'Recent'}
                       </span>
                     </div>
                     <p className="text-[11px] text-stone-500 truncate mt-0.5">
-                      {st.stories[0]?.caption ||
-                        (st.stories[0]?.type === 'text'
+                      {st.stories?.[0]?.caption ||
+                        (st.stories?.[0]?.type === 'text'
                           ? st.stories[0].text
                           : 'Photo story')}
                     </p>
@@ -157,7 +166,7 @@ export default function StatusSidebar({
           </div>
         )}
 
-        {/* Viewed Updates Section (Each contact appears ONCE) */}
+        {/* Viewed Updates Section */}
         {viewedStatuses.length > 0 && (
           <div>
             <button
@@ -183,11 +192,17 @@ export default function StatusSidebar({
                   >
                     <div className="w-11 h-11 rounded-full p-0.5 ring-1.5 ring-stone-300 bg-stone-100 shadow-2xs flex-shrink-0">
                       <div className="w-full h-full rounded-full overflow-hidden bg-white p-0.5">
-                        <img
-                          src={st.userAvatar}
-                          alt={st.userName}
-                          className="w-full h-full object-cover rounded-full"
-                        />
+                        {st.userAvatar ? (
+                          <img
+                            src={st.userAvatar}
+                            alt={st.userName}
+                            className="w-full h-full object-cover rounded-full"
+                          />
+                        ) : (
+                          <div className="w-full h-full bg-stone-200 text-stone-600 font-bold text-xs flex items-center justify-center">
+                            {st.userName?.slice(0, 2).toUpperCase() || 'ST'}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -197,17 +212,30 @@ export default function StatusSidebar({
                           {st.userName}
                         </h4>
                         <span className="text-[10px] text-stone-400 font-medium ml-1">
-                          {st.timestamp}
+                          {st.timestamp || 'Viewed'}
                         </span>
                       </div>
                       <p className="text-[11px] text-stone-400 truncate mt-0.5">
-                        {st.stories[0]?.caption || 'Photo story'}
+                        {st.stories?.[0]?.caption || 'Photo story'}
                       </p>
                     </div>
                   </div>
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Empty state when no contact updates yet */}
+        {recentStatuses.length === 0 && viewedStatuses.length === 0 && (
+          <div className="pt-6 pb-4 px-3 flex flex-col items-center justify-center text-center">
+            <div className="w-10 h-10 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center mb-2.5">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <p className="text-xs font-bold text-stone-700">No updates from contacts yet</p>
+            <p className="text-[11px] text-stone-400 mt-1 max-w-[200px]">
+              Tap <span className="font-semibold text-violet-700">Add</span> above to share your own status update!
+            </p>
           </div>
         )}
       </div>

@@ -17,12 +17,12 @@ import { authService } from './services/authService.js';
 import {
   chatService,
   stringToUuid,
+  getEmailUuid,
   cleanPhoneNumber,
   isContactOnline,
 } from './services/chatService.js';
 import './testSupabase';
 import { CURRENT_USER } from './data/mockData';
-import { INITIAL_STATUSES } from './data/mockStatus';
 
 export default function App() {
   // Restore authenticated session from localStorage on refresh
@@ -132,9 +132,27 @@ export default function App() {
   const [showMobileChat, setShowMobileChat] = useState(false);
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
 
-  // Status & Camera States
-  const [contactStatuses, setContactStatuses] = useState(INITIAL_STATUSES);
-  const [myStatuses, setMyStatuses] = useState([]);
+  // Status & Camera States (100% Real, Zero Dummy Data)
+  const [contactStatuses, setContactStatuses] = useState(() => {
+    return chatService.getContactStatusesFromCache() || [];
+  });
+  const [myStatuses, setMyStatuses] = useState(() => {
+    try {
+      const savedSession = localStorage.getItem('bloom_auth_session');
+      const email = savedSession ? JSON.parse(savedSession)?.user?.email : null;
+      return chatService.getMyStatusesFromCache(email) || [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  // Reload user's saved statuses when currentUser changes
+  useEffect(() => {
+    if (currentUser?.email) {
+      const loaded = chatService.getMyStatusesFromCache(currentUser.email);
+      if (loaded) setMyStatuses(loaded);
+    }
+  }, [currentUser?.email]);
   const [viewedStatusIds, setViewedStatusIds] = useState([]);
   const [viewingStatus, setViewingStatus] = useState(null);
   const [isCreateStatusOpen, setIsCreateStatusOpen] = useState(false);
@@ -218,17 +236,52 @@ export default function App() {
     };
   }, []);
 
-  // Real-Time Online Presence Tracking: Only genuinely logged-in users show as Online!
+  // Real-Time Online Presence + Realtime Direct Messaging + Live Statuses Hub
   useEffect(() => {
-    if (!currentUser?.id) return;
+    if (!currentUser?.email && !currentUser?.id) return;
 
-    const cleanupPresence = chatService.initPresence(
-      currentUser,
-      ({ onlineUserIds, onlineEmails, onlinePhones }) => {
-        const newPresence = { onlineUserIds, onlineEmails, onlinePhones };
+    // 1. Fetch remote messages from Supabase in background for all conversations
+    conversations.forEach(async (conv) => {
+      const contactEmail = conv.user?.email;
+      if (!contactEmail) return;
+      try {
+        const remoteMsgs = await chatService.fetchMessages(currentUser.email, contactEmail);
+        if (remoteMsgs && remoteMsgs.length > 0) {
+          setConversations((prev) => {
+            const updated = prev.map((c) => {
+              if (c.id === conv.id) {
+                const existingMap = new Map(c.messages.map((m) => [m.id, m]));
+                remoteMsgs.forEach((rm) => existingMap.set(rm.id, rm));
+                const combined = Array.from(existingMap.values()).sort(
+                  (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)
+                );
+                chatService.saveMessagesToCache(c.id, combined);
+                return {
+                  ...c,
+                  messages: combined,
+                  lastActivity:
+                    combined[combined.length - 1]?.created_at
+                      ? new Date(combined[combined.length - 1].created_at).getTime()
+                      : c.lastActivity,
+                };
+              }
+              return c;
+            });
+            chatService.saveConversationsToCache(currentUser.email || currentUser.id, updated);
+            return updated;
+          });
+        }
+      } catch (err) {
+        console.warn('Sync error for conversation:', conv.id, err);
+      }
+    });
+
+    // 2. Connect to Unified Real-Time Hub
+    const cleanupHub = chatService.initRealtimeHub(currentUser, {
+      onPresenceChange: ({ onlineUserIds, onlineEmails }) => {
+        const newPresence = { onlineUserIds, onlineEmails };
         setPresenceState(newPresence);
 
-        // Update contacts online/offline status live
         setConversations((prev) =>
           prev.map((conv) => {
             const isOnline = isContactOnline(conv.user, newPresence);
@@ -245,89 +298,39 @@ export default function App() {
             return conv;
           })
         );
-      }
-    );
-
-    return () => {
-      if (typeof cleanupPresence === 'function') cleanupPresence();
-    };
-  }, [currentUser?.id, currentUser?.email, currentUser?.phone]);
-
-  // Real-Time Supabase Message Subscription & Remote Message Sync
-  useEffect(() => {
-    if (!currentUser?.id) return;
-
-    // 1. Fetch remote messages from Supabase in background for all active conversations
-    conversations.forEach(async (conv) => {
-      try {
-        const remoteMsgs = await chatService.fetchMessages(currentUser.id, conv.user.id);
-        if (remoteMsgs && remoteMsgs.length > 0) {
-          setConversations((prev) => {
-            const updated = prev.map((c) => {
-              if (c.id === conv.id) {
-                // Merge remote messages with local messages, keeping all unique messages
-                const existingMap = new Map(c.messages.map((m) => [m.id, m]));
-                remoteMsgs.forEach((rm) => {
-                  existingMap.set(rm.id, rm);
-                });
-                const combined = Array.from(existingMap.values()).sort(
-                  (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)
-                );
-
-                // Save to local cache immediately
-                chatService.saveMessagesToCache(c.id, combined);
-
-                return {
-                  ...c,
-                  messages: combined,
-                  lastActivity:
-                    combined[combined.length - 1]?.created_at
-                      ? new Date(combined[combined.length - 1].created_at).getTime()
-                      : c.lastActivity,
-                };
-              }
-              return c;
-            });
-
-            chatService.saveConversationsToCache(currentUser.id, updated);
-            return updated;
-          });
-        }
-      } catch (err) {
-        console.warn('Sync error for conversation:', conv.id, err);
-      }
-    });
-
-    // 2. Subscribe to Supabase Realtime channel for live incoming messages
-    const unsubscribe = chatService.subscribeToUserMessages(
-      currentUser.id,
-      (incomingMsg, { isSender, isReceiver }) => {
-        const otherUserId = isSender ? incomingMsg.receiverId : incomingMsg.senderId;
+      },
+      onMessageReceived: (incomingMsg, { isSender, isReceiver }) => {
+        const otherEmail = isSender ? incomingMsg.receiverEmail : incomingMsg.senderEmail;
+        const otherId = isSender ? incomingMsg.receiverId : incomingMsg.senderId;
 
         setConversations((prev) => {
           let targetConv = prev.find(
-            (c) => c.user.id === otherUserId || c.id === otherUserId
+            (c) =>
+              (otherEmail && c.user.email?.toLowerCase() === otherEmail.toLowerCase()) ||
+              c.user.id === otherId ||
+              c.id === otherId
           );
 
           let updatedList;
           if (!targetConv) {
             // New contact started messaging in real time!
-            const newConvId = otherUserId;
-            const isOnlineNow = isContactOnline({ id: otherUserId }, presenceState);
+            const contactEmail = otherEmail || incomingMsg.senderEmail || '';
+            const convId = contactEmail ? getEmailUuid(contactEmail) : otherId;
+            const isOnlineNow = isContactOnline({ id: convId, email: contactEmail }, presenceState);
 
             targetConv = {
-              id: newConvId,
+              id: convId,
               user: {
-                id: otherUserId,
-                name: 'Bloom User 🌸',
-                email: '',
-                phone: '',
+                id: convId,
+                name: incomingMsg.senderName || contactEmail.split('@')[0] || 'Bloom Contact 🌸',
+                email: contactEmail,
                 avatar:
+                  incomingMsg.senderAvatar ||
                   'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=250&q=80',
                 status: isOnlineNow ? 'online' : 'offline',
                 about: 'Available 🌸',
               },
-              unreadCount: isReceiver && activeConversationIdRef.current !== newConvId ? 1 : 0,
+              unreadCount: isReceiver && activeConversationIdRef.current !== convId ? 1 : 0,
               pinned: false,
               pinnedMessageId: null,
               lastActivity: Date.now(),
@@ -335,11 +338,10 @@ export default function App() {
             };
             updatedList = [targetConv, ...prev];
           } else {
-            // Append incoming message if not already present
             const alreadyExists = targetConv.messages.some(
               (m) =>
                 m.id === incomingMsg.id ||
-                (m.text === incomingMsg.text && m.senderId === incomingMsg.senderId)
+                (m.text === incomingMsg.text && m.created_at === incomingMsg.created_at)
             );
 
             const updatedMsgs = alreadyExists
@@ -354,25 +356,58 @@ export default function App() {
               unreadCount:
                 isReceiver && !isCurrentActive
                   ? (targetConv.unreadCount || 0) + 1
-                  : 0,
+                  : targetConv.unreadCount || 0,
               messages: updatedMsgs,
             };
 
             updatedList = prev.map((c) => (c.id === targetConv.id ? targetConv : c));
           }
 
-          // Guarantee persistent local storage immediately
           chatService.saveMessagesToCache(targetConv.id, targetConv.messages);
-          chatService.saveConversationsToCache(currentUser.id, updatedList);
+          chatService.saveConversationsToCache(currentUser.email || currentUser.id, updatedList);
           return updatedList;
         });
-      }
-    );
+      },
+      onStatusReceived: (newStatusPayload) => {
+        setContactStatuses((prev) => {
+          const filtered = prev.filter(
+            (s) => s.userEmail?.toLowerCase() !== newStatusPayload.userEmail?.toLowerCase()
+          );
+          const updated = [newStatusPayload, ...filtered];
+          chatService.saveContactStatusesToCache(updated);
+          return updated;
+        });
+      },
+      onStatusViewReceived: ({ statusId, storyId, viewer }) => {
+        setMyStatuses((prev) => {
+          const updated = prev.map((st) => {
+            const updatedStories = st.stories.map((story) => {
+              if (!storyId || story.id === storyId) {
+                const currentViewers = story.viewers || [];
+                const already = currentViewers.some(
+                  (v) => v.email?.toLowerCase() === viewer.email?.toLowerCase()
+                );
+                if (!already) {
+                  return {
+                    ...story,
+                    viewers: [viewer, ...currentViewers],
+                  };
+                }
+              }
+              return story;
+            });
+            return { ...st, stories: updatedStories };
+          });
+          chatService.saveMyStatusesToCache(currentUser.email, updated);
+          return updated;
+        });
+      },
+    });
 
     return () => {
-      if (typeof unsubscribe === 'function') unsubscribe();
+      if (typeof cleanupHub === 'function') cleanupHub();
     };
-  }, [currentUser?.id, presenceState]);
+  }, [currentUser?.email, currentUser?.id, presenceState]);
 
   // Handle Logout
   const handleLogout = async () => {
@@ -442,7 +477,7 @@ export default function App() {
   };
 
   // Send a new message (text and/or attachment from local files)
-  // Saved immediately to LocalStorage and synced to Supabase database (NEVER deleted)
+  // Saved immediately to LocalStorage and synced via Broadcast and Supabase DB
   const handleSendMessage = async (text, attachment = null) => {
     if ((!text && !attachment) || !activeConversationId) return;
 
@@ -457,15 +492,22 @@ export default function App() {
 
     const nowTimestamp = Date.now();
     const newMsgId = `msg-${nowTimestamp}`;
+    const myEmail = (currentUser.email || '').toLowerCase().trim();
+    const targetEmail = (currentConv.user.email || '').toLowerCase().trim();
+
     const newMessage = {
       id: newMsgId,
-      senderId: currentUser.id,
+      senderId: currentUser.id || getEmailUuid(myEmail),
+      senderEmail: myEmail,
+      senderName: currentUser.name || myEmail.split('@')[0],
       receiverId: currentConv.user.id,
+      receiverEmail: targetEmail,
       text: text || '',
       attachment: attachment || null,
       timestamp: timeString,
       date: 'Today',
       status: 'delivered', // Double gray tick
+      created_at: now.toISOString(),
     };
 
     // 1. Immediate optimistic UI update + LocalStorage save (zero-deletion guarantee)
@@ -482,22 +524,25 @@ export default function App() {
         }
         return conv;
       });
-      chatService.saveConversationsToCache(currentUser.id, updated);
+      chatService.saveConversationsToCache(currentUser.email || currentUser.id, updated);
       return updated;
     });
 
-    // 2. Real-time push to Supabase Database
+    // 2. Real-time push to Recipient via Broadcast & Supabase Database
     try {
       const saved = await chatService.sendMessage({
-        senderId: currentUser.id,
+        senderId: currentUser.id || getEmailUuid(myEmail),
+        senderEmail: myEmail,
+        senderName: currentUser.name || myEmail.split('@')[0],
         receiverId: currentConv.user.id,
+        receiverEmail: targetEmail,
         text: text || '',
         attachment,
         status: 'delivered',
       });
 
-      if (saved) {
-        // Update temporary message ID with confirmed Supabase ID
+      if (saved && saved.id) {
+        // Update temporary message ID with confirmed ID
         setConversations((prev) => {
           const updated = prev.map((conv) => {
             if (conv.id === activeConversationId) {
@@ -509,35 +554,26 @@ export default function App() {
             }
             return conv;
           });
-          chatService.saveConversationsToCache(currentUser.id, updated);
+          chatService.saveConversationsToCache(currentUser.email || currentUser.id, updated);
           return updated;
         });
       }
     } catch (err) {
-      console.warn('Realtime Supabase send exception:', err);
+      console.warn('Realtime send exception:', err);
     }
   };
 
-  // Start a new chat or add contact via Mobile Number or Email
+  // Start a new chat or add contact via Email Address
   const handleStartNewChat = (contactData) => {
-    const rawIdentifier = contactData.phone || contactData.email || contactData.name;
-    const contactUuid = stringToUuid(rawIdentifier);
+    const cleanEmail = (contactData.email || '').toLowerCase().trim();
+    if (!cleanEmail) return;
 
-    // If chat already exists by ID, email, or mobile number, select it
+    const contactUuid = getEmailUuid(cleanEmail);
+
+    // If chat already exists by ID or email, select it
     const existing = conversations.find((c) => {
       if (c.id === contactUuid || c.user.id === contactUuid) return true;
-      if (
-        contactData.phone &&
-        c.user.phone &&
-        cleanPhoneNumber(c.user.phone) === cleanPhoneNumber(contactData.phone)
-      ) {
-        return true;
-      }
-      if (
-        contactData.email &&
-        c.user.email &&
-        c.user.email.toLowerCase() === contactData.email.toLowerCase()
-      ) {
+      if (c.user.email && c.user.email.toLowerCase() === cleanEmail) {
         return true;
       }
       return false;
@@ -551,7 +587,7 @@ export default function App() {
 
     // Verify online status through presence: strictly offline unless actually logged in!
     const isOnlineNow = isContactOnline(
-      { id: contactUuid, email: contactData.email, phone: contactData.phone },
+      { id: contactUuid, email: cleanEmail },
       presenceState
     );
 
@@ -559,9 +595,9 @@ export default function App() {
       id: contactUuid,
       user: {
         id: contactUuid,
-        name: contactData.name,
-        phone: contactData.phone || '',
-        email: contactData.email || '',
+        name: contactData.name || cleanEmail.split('@')[0],
+        phone: '',
+        email: cleanEmail,
         avatar: contactData.avatar,
         about: 'Available 🌸',
         status: isOnlineNow ? 'online' : 'offline', // NEVER fake online!
@@ -575,12 +611,36 @@ export default function App() {
 
     setConversations((prev) => {
       const updated = [newConv, ...prev];
-      chatService.saveConversationsToCache(currentUser.id, updated);
+      chatService.saveConversationsToCache(currentUser.email || currentUser.id, updated);
       return updated;
     });
 
     setActiveConversationId(contactUuid);
     setShowMobileChat(true);
+
+    // Also fetch remote messages from Supabase in background
+    if (currentUser?.email) {
+      chatService.fetchMessages(currentUser.email, cleanEmail).then((remoteMsgs) => {
+        if (remoteMsgs && remoteMsgs.length > 0) {
+          setConversations((prev) => {
+            const updated = prev.map((c) => {
+              if (c.id === contactUuid) {
+                const existingMap = new Map(c.messages.map((m) => [m.id, m]));
+                remoteMsgs.forEach((rm) => existingMap.set(rm.id, rm));
+                const combined = Array.from(existingMap.values()).sort(
+                  (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)
+                );
+                chatService.saveMessagesToCache(contactUuid, combined);
+                return { ...c, messages: combined };
+              }
+              return c;
+            });
+            chatService.saveConversationsToCache(currentUser.email || currentUser.id, updated);
+            return updated;
+          });
+        }
+      });
+    }
   };
 
   // Add/toggle reaction on a message (Saved permanently)
@@ -686,18 +746,57 @@ export default function App() {
     setProfileModalUser(updatedUser);
   };
 
-  // Post a new status update
+  // Post a new real status update (persisted and broadcast live)
   const handlePostNewStatus = (storyItem) => {
+    const storyWithViewers = {
+      ...storyItem,
+      viewers: [],
+      likesCount: 0,
+    };
     const existingStories = myStatuses[0]?.stories || [];
+    const statusId = `status-me-${Date.now()}`;
+    const myEmail = (currentUser.email || '').toLowerCase().trim();
+
     const updatedMyStatus = {
-      id: `status-me-${Date.now()}`,
+      id: statusId,
       userId: currentUser.id,
-      userName: currentUser.name,
+      userEmail: myEmail,
+      userName: currentUser.name || myEmail.split('@')[0],
       userAvatar: currentUser.avatar,
       timestamp: 'Just now',
-      stories: [storyItem, ...existingStories],
+      stories: [storyWithViewers, ...existingStories],
     };
-    setMyStatuses([updatedMyStatus]);
+
+    const newStatuses = [updatedMyStatus];
+    setMyStatuses(newStatuses);
+    chatService.saveMyStatusesToCache(myEmail, newStatuses);
+
+    // Broadcast live status update to other connected users
+    chatService.broadcastStatus({
+      id: `status-${myEmail}-${Date.now()}`,
+      userId: currentUser.id,
+      userEmail: myEmail,
+      userName: currentUser.name || myEmail.split('@')[0],
+      userAvatar: currentUser.avatar,
+      timestamp: 'Just now',
+      stories: [storyWithViewers],
+    });
+  };
+
+  // Record viewing a story in real-time
+  const handleViewStory = (statusId, storyId) => {
+    if (!currentUser?.email) return;
+    chatService.broadcastStatusView({
+      statusId,
+      storyId,
+      viewer: {
+        id: currentUser.id,
+        email: currentUser.email,
+        name: currentUser.name,
+        avatar: currentUser.avatar || '',
+        time: 'Just now',
+      },
+    });
   };
 
   // Photo captured from camera directly for Status
@@ -722,8 +821,12 @@ export default function App() {
   };
 
   // Reply to a contact's status
-  const handleReplyStatus = (targetUserId, replyText) => {
-    const conv = conversations.find((c) => c.user.id === targetUserId);
+  const handleReplyStatus = (targetEmailOrId, replyText) => {
+    const conv = conversations.find(
+      (c) =>
+        (c.user.email && c.user.email.toLowerCase() === String(targetEmailOrId).toLowerCase()) ||
+        c.user.id === targetEmailOrId
+    );
     if (conv) {
       setActiveNavTab('chats');
       setActiveConversationId(conv.id);
@@ -870,6 +973,7 @@ export default function App() {
         currentUser={currentUser}
         onClose={() => setViewingStatus(null)}
         onReplyStatus={handleReplyStatus}
+        onViewStory={handleViewStory}
       />
 
       {/* Start New Chat Modal */}
