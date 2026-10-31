@@ -1,18 +1,14 @@
 import { supabase } from '../lib/supabaseClient.js';
 
 /**
- * Deterministically generates a valid UUID v4 formatted string from any identifier (email, phone, etc.)
- * Strips whitespace, dashes, and brackets so formatting variations map to the same UUID.
+ * Universal UUID generator from any string (fallback if needed)
  */
 export function stringToUuid(str) {
   if (!str) return '00000000-0000-0000-0000-000000000000';
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (uuidRegex.test(str)) return str.toLowerCase();
 
-  // Normalize string (strip spaces, hyphens, parentheses)
   const cleanStr = String(str).replace(/[\s\-\(\)]/g, '').toLowerCase();
-
-  // Create a 32-character hex hash from normalized string
   let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
   for (let i = 0; i < cleanStr.length; i++) {
     const ch = cleanStr.charCodeAt(i);
@@ -31,17 +27,11 @@ export function stringToUuid(str) {
   return `${raw.slice(0, 8)}-${raw.slice(8, 12)}-4${raw.slice(13, 16)}-a${raw.slice(17, 20)}-${raw.slice(20, 32)}`;
 }
 
-/**
- * Universal email-to-UUID mapper so User A and User B always share identical matching address IDs
- */
 export function getEmailUuid(email) {
   if (!email) return '00000000-0000-0000-0000-000000000000';
   return stringToUuid(String(email).trim().toLowerCase());
 }
 
-/**
- * Format time helper (e.g. "10:30 AM")
- */
 export function formatTimestamp(dateObj) {
   const d = dateObj ? new Date(dateObj) : new Date();
   return d.toLocaleTimeString([], {
@@ -50,9 +40,6 @@ export function formatTimestamp(dateObj) {
   });
 }
 
-/**
- * Format date label helper (e.g. "Today", "Yesterday", "Oct 31")
- */
 export function formatDateLabel(dateObj) {
   const d = dateObj ? new Date(dateObj) : new Date();
   const now = new Date();
@@ -67,75 +54,49 @@ export function formatDateLabel(dateObj) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-/**
- * Clean phone number helper (removes non-digits except +)
- */
 export function cleanPhoneNumber(phone) {
   if (!phone) return '';
   return phone.replace(/[^\d+]/g, '');
 }
 
 /**
- * Parses message content safely (supports plain text or serialized JSON with attachments/reactions)
- */
-export function parseMessageContent(rawContent) {
-  if (!rawContent) {
-    return { text: '', attachment: null, status: 'delivered', reaction: null };
-  }
-  if (typeof rawContent === 'object') {
-    return {
-      text: rawContent.text || '',
-      attachment: rawContent.attachment || null,
-      status: rawContent.status || 'delivered',
-      reaction: rawContent.reaction || null,
-      senderEmail: rawContent.senderEmail || '',
-      receiverEmail: rawContent.receiverEmail || '',
-      senderName: rawContent.senderName || '',
-    };
-  }
-  if (typeof rawContent === 'string') {
-    const trimmed = rawContent.trim();
-    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (parsed && typeof parsed === 'object') {
-          return {
-            text: parsed.text || '',
-            attachment: parsed.attachment || null,
-            status: parsed.status || 'delivered',
-            reaction: parsed.reaction || null,
-            senderEmail: parsed.senderEmail || '',
-            receiverEmail: parsed.receiverEmail || '',
-            senderName: parsed.senderName || '',
-          };
-        }
-      } catch (e) {
-        // Fallback to plain text
-      }
-    }
-    return { text: rawContent, attachment: null, status: 'delivered', reaction: null };
-  }
-  return { text: String(rawContent), attachment: null, status: 'delivered', reaction: null };
-}
-
-/**
- * Maps Supabase messages row to frontend Message object
+ * Normalizes message row from Supabase into frontend Message format
  */
 export function mapSupabaseMessage(row) {
-  const parsed = parseMessageContent(row.content);
+  if (!row) return null;
   const createdAt = row.created_at ? new Date(row.created_at) : new Date();
+  let parsedContent = row.text || '';
+  let attachment = row.attachment || null;
+  let senderEmail = '';
+  let senderName = '';
+
+  // If content is stored as JSON string (legacy or fallback)
+  if (row.content && !row.text) {
+    if (typeof row.content === 'string' && row.content.trim().startsWith('{')) {
+      try {
+        const obj = JSON.parse(row.content);
+        parsedContent = obj.text || '';
+        attachment = obj.attachment || attachment;
+        senderEmail = obj.senderEmail || '';
+        senderName = obj.senderName || '';
+      } catch (e) {
+        parsedContent = row.content;
+      }
+    } else {
+      parsedContent = row.content;
+    }
+  }
 
   return {
     id: String(row.id),
-    senderId: row.sender_id,
-    receiverId: row.receiver_id,
-    senderEmail: parsed.senderEmail || '',
-    receiverEmail: parsed.receiverEmail || '',
-    senderName: parsed.senderName || '',
-    text: parsed.text,
-    attachment: parsed.attachment,
-    status: parsed.status || 'delivered',
-    reaction: parsed.reaction || null,
+    conversationId: row.conversation_id || null,
+    senderId: String(row.sender_id || ''),
+    senderEmail,
+    senderName,
+    text: parsedContent || '',
+    attachment,
+    status: row.status || 'delivered',
+    reaction: row.reaction || null,
     timestamp: formatTimestamp(createdAt),
     date: formatDateLabel(createdAt),
     created_at: row.created_at || createdAt.toISOString(),
@@ -149,23 +110,11 @@ export function isContactOnline(contactUser, presenceState) {
   if (!contactUser || !presenceState) return false;
   const { onlineUserIds, onlineEmails } = presenceState;
 
-  // 1. Check Email
   if (contactUser.email && onlineEmails) {
     const cleanEmail = contactUser.email.toLowerCase().trim();
-    if (cleanEmail && onlineEmails.has(cleanEmail)) {
-      return true;
-    }
+    if (cleanEmail && onlineEmails.has(cleanEmail)) return true;
   }
 
-  // 2. Check Custom User ID / Username
-  if (contactUser.userId && presenceState.onlineUsernames) {
-    const cleanUid = contactUser.userId.toLowerCase().trim().replace(/^@/, '');
-    if (cleanUid && presenceState.onlineUsernames.has(cleanUid)) {
-      return true;
-    }
-  }
-
-  // 3. Check User UUID or Email Hash UUID
   if (contactUser.id && onlineUserIds) {
     const lowerId = String(contactUser.id).toLowerCase();
     if (onlineUserIds.has(lowerId)) return true;
@@ -179,126 +128,423 @@ export function isContactOnline(contactUser, presenceState) {
   return false;
 }
 
-// Global active Realtime Channel singleton
+// Active channel singletons
 let globalRealtimeChannel = null;
+let activeConversationChannel = null;
 
-/**
- * Bloom Real-Time Chat, Zero-Deletion Storage, and Real Presence Service
- */
 export const chatService = {
-  // 1. Local Storage Message Persistence (Guarantee zero deletion on reload)
-  saveMessagesToCache(conversationId, messages) {
-    try {
-      if (!conversationId) return;
-      localStorage.setItem(`bloom_msgs_${conversationId}`, JSON.stringify(messages || []));
-    } catch (e) {
-      console.warn('LocalStorage save error:', e);
-    }
-  },
+  // ==============================================================================
+  // 1. PROFILE MANAGEMENT (Upsert on login & Search by Email)
+  // ==============================================================================
 
-  getMessagesFromCache(conversationId) {
+  /**
+   * Ensure user's profile is registered in public.profiles table
+   */
+  async ensureProfile(user) {
+    if (!user || !user.id) return null;
+    const meta = user.user_metadata || {};
+    const email = (user.email || '').toLowerCase().trim();
+    const name = meta.name || email.split('@')[0] || 'Bloom User';
+    const avatarUrl = meta.avatar_url || meta.avatar || '';
+
+    const payload = {
+      id: user.id,
+      name,
+      email,
+      avatar_url: avatarUrl,
+      status: 'online',
+      updated_at: new Date().toISOString(),
+    };
+
     try {
-      if (!conversationId) return [];
-      const saved = localStorage.getItem(`bloom_msgs_${conversationId}`);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+      const { data, error } = await supabase
+        .from('profiles')
+        .upsert(payload, { onConflict: 'id' })
+        .select()
+        .single();
+
+      if (error) {
+        console.warn('ensureProfile DB notice:', error.message);
       }
-    } catch (e) {
-      console.warn('LocalStorage load error:', e);
-    }
-    return [];
-  },
-
-  // 2. Local Storage Conversation Persistence
-  saveConversationsToCache(userKey, conversations) {
-    try {
-      if (!userKey) return;
-      const stripped = (conversations || []).map((conv) => ({
-        id: conv.id,
-        user: {
-          ...conv.user,
-          status: 'offline', // Always persist as offline; real status determined live via presence
-        },
-        unreadCount: conv.unreadCount || 0,
-        pinned: Boolean(conv.pinned),
-        pinnedMessageId: conv.pinnedMessageId || null,
-        lastActivity: conv.lastActivity || Date.now(),
-      }));
-      localStorage.setItem(`bloom_convs_${userKey}`, JSON.stringify(stripped));
-    } catch (e) {
-      console.warn('LocalStorage conv save error:', e);
+      return data || payload;
+    } catch (err) {
+      console.warn('ensureProfile exception:', err);
+      return payload;
     }
   },
 
-  getConversationsFromCache(userKey) {
+  /**
+   * Search registered users by email address
+   * Excludes the currently logged-in user from search results.
+   */
+  async searchUsersByEmail(searchQuery, currentUserId) {
+    const query = (searchQuery || '').trim().toLowerCase();
+    if (!query) return [];
+
     try {
-      if (!userKey) return [];
-      const saved = localStorage.getItem(`bloom_convs_${userKey}`);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.map((c) => ({
-            ...c,
-            user: {
-              ...c.user,
-              status: 'offline', // default offline until live presence verifies
-            },
-          }));
+      let req = supabase
+        .from('profiles')
+        .select('id, name, email, avatar_url, about, status')
+        .ilike('email', `%${query}%`)
+        .limit(10);
+
+      if (currentUserId) {
+        req = req.neq('id', currentUserId);
+      }
+
+      const { data, error } = await req;
+      if (error) {
+        console.warn('searchUsersByEmail DB notice:', error.message);
+        return [];
+      }
+      return data || [];
+    } catch (err) {
+      console.warn('searchUsersByEmail exception:', err);
+      return [];
+    }
+  },
+
+  // ==============================================================================
+  // 2. CONVERSATIONS & PARTICIPANTS (One-to-One Chat Connection)
+  // ==============================================================================
+
+  /**
+   * Gets an existing 1-on-1 direct conversation between two users, or creates one.
+   * Guarantees no duplicate conversations between the same pair of users.
+   */
+  async getOrCreateDirectConversation(currentUserId, otherUserId) {
+    if (!currentUserId || !otherUserId) {
+      throw new Error('Both currentUserId and otherUserId are required.');
+    }
+
+    try {
+      // Step A: Find all conversations current user participates in
+      const { data: myParticipants, error: myPartErr } = await supabase
+        .from('conversation_participants')
+        .select('conversation_id')
+        .eq('user_id', currentUserId);
+
+      if (myPartErr) {
+        console.warn('Error fetching current user participants:', myPartErr.message);
+      }
+
+      const myConvIds = (myParticipants || []).map((p) => p.conversation_id);
+
+      // Step B: Check if otherUserId shares any of these conversations
+      if (myConvIds.length > 0) {
+        const { data: shared, error: sharedErr } = await supabase
+          .from('conversation_participants')
+          .select('conversation_id')
+          .in('conversation_id', myConvIds)
+          .eq('user_id', otherUserId)
+          .limit(1);
+
+        if (!sharedErr && shared && shared.length > 0) {
+          // Existing conversation found! Return it without creating duplicate
+          return shared[0].conversation_id;
         }
       }
-    } catch (e) {
-      console.warn('LocalStorage conv load error:', e);
-    }
-    return [];
-  },
 
-  // 3. Status Persistence in LocalStorage
-  saveMyStatusesToCache(userKey, statuses) {
-    try {
-      if (!userKey) return;
-      localStorage.setItem(`bloom_my_status_${userKey}`, JSON.stringify(statuses || []));
-    } catch (e) {
-      console.warn('LocalStorage save status error:', e);
-    }
-  },
+      // Step C: No existing conversation found. Create a new conversation row.
+      const { data: newConv, error: newConvErr } = await supabase
+        .from('conversations')
+        .insert([{ type: 'direct', title: null }])
+        .select()
+        .single();
 
-  getMyStatusesFromCache(userKey) {
-    try {
-      if (!userKey) return [];
-      const saved = localStorage.getItem(`bloom_my_status_${userKey}`);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+      if (newConvErr || !newConv) {
+        throw new Error(newConvErr?.message || 'Failed to create conversation');
       }
-    } catch (e) {
-      console.warn('LocalStorage load status error:', e);
-    }
-    return [];
-  },
 
-  saveContactStatusesToCache(statuses) {
-    try {
-      localStorage.setItem('bloom_contact_statuses', JSON.stringify(statuses || []));
-    } catch (e) {
-      console.warn('LocalStorage save contact status error:', e);
-    }
-  },
+      const conversationId = newConv.id;
 
-  getContactStatusesFromCache() {
-    try {
-      const saved = localStorage.getItem('bloom_contact_statuses');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+      // Step D: Add both users to conversation_participants table
+      const { error: partErr } = await supabase
+        .from('conversation_participants')
+        .insert([
+          { conversation_id: conversationId, user_id: currentUserId, pinned: false, unread_count: 0 },
+          { conversation_id: conversationId, user_id: otherUserId, pinned: false, unread_count: 0 },
+        ]);
+
+      if (partErr) {
+        console.warn('Error inserting conversation participants:', partErr.message);
       }
-    } catch (e) {
-      console.warn('LocalStorage load contact status error:', e);
+
+      return conversationId;
+    } catch (err) {
+      console.error('getOrCreateDirectConversation error:', err);
+      // Fallback deterministic UUID based on sorted user IDs
+      const sortedPair = [String(currentUserId), String(otherUserId)].sort().join('__');
+      return stringToUuid(sortedPair);
     }
-    return [];
   },
 
-  // 4. Unified Real-Time Hub: Presence + Direct Messaging Broadcast + Live Statuses
+  /**
+   * Fetches all conversations for a user, including participant info & last message.
+   * Deduplicates contacts so each user appears only once.
+   */
+  async fetchUserConversations(currentUserId) {
+    if (!currentUserId) return [];
+
+    try {
+      // 1. Get all conversation IDs where current user is a participant
+      const { data: participations, error: partErr } = await supabase
+        .from('conversation_participants')
+        .select('conversation_id, pinned, unread_count')
+        .eq('user_id', currentUserId);
+
+      if (partErr || !participations || participations.length === 0) {
+        return [];
+      }
+
+      const convMap = new Map();
+      participations.forEach((p) => {
+        convMap.set(p.conversation_id, {
+          pinned: Boolean(p.pinned),
+          unreadCount: p.unread_count || 0,
+        });
+      });
+
+      const convIds = Array.from(convMap.keys());
+
+      // 2. Find other participants in these conversations
+      const { data: otherParticipants, error: otherErr } = await supabase
+        .from('conversation_participants')
+        .select(`
+          conversation_id,
+          user_id,
+          profiles (
+            id,
+            name,
+            email,
+            avatar_url,
+            about,
+            status
+          )
+        `)
+        .in('conversation_id', convIds)
+        .neq('user_id', currentUserId);
+
+      if (otherErr) {
+        console.warn('fetchUserConversations otherParticipants note:', otherErr.message);
+      }
+
+      // 3. For each conversation, fetch the latest message
+      const results = [];
+      const seenUserIds = new Set();
+
+      for (const convId of convIds) {
+        const participantInfo = (otherParticipants || []).find(
+          (op) => op.conversation_id === convId
+        );
+        const otherProfile = participantInfo?.profiles || null;
+        const otherUserId = participantInfo?.user_id;
+
+        // Skip if we already added a conversation for this exact other user (deduplication)
+        if (otherUserId && seenUserIds.has(otherUserId)) {
+          continue;
+        }
+        if (otherUserId) seenUserIds.add(otherUserId);
+
+        const convMeta = convMap.get(convId) || {};
+
+        // Fetch last message for this conversation
+        let lastMsg = null;
+        try {
+          const { data: msgs } = await supabase
+            .from('messages')
+            .select('*')
+            .eq('conversation_id', convId)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (msgs && msgs[0]) {
+            lastMsg = mapSupabaseMessage(msgs[0]);
+          }
+        } catch (e) {}
+
+        const contactName =
+          otherProfile?.name ||
+          otherProfile?.email?.split('@')[0] ||
+          'Bloom Contact 🌸';
+
+        results.push({
+          id: convId,
+          user: {
+            id: otherUserId || convId,
+            name: contactName,
+            email: otherProfile?.email || '',
+            avatar: otherProfile?.avatar_url || '',
+            about: otherProfile?.about || 'Available 🌸',
+            status: otherProfile?.status || 'offline',
+          },
+          unreadCount: convMeta.unreadCount || 0,
+          pinned: convMeta.pinned || false,
+          lastActivity: lastMsg?.created_at
+            ? new Date(lastMsg.created_at).getTime()
+            : Date.now(),
+          messages: lastMsg ? [lastMsg] : [],
+        });
+      }
+
+      // Sort by pinned first, then by last activity
+      return results.sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        return (b.lastActivity || 0) - (a.lastActivity || 0);
+      });
+    } catch (err) {
+      console.warn('fetchUserConversations exception:', err);
+      return [];
+    }
+  },
+
+  // ==============================================================================
+  // 3. MESSAGES (Fetch, Send, Realtime Subscription)
+  // ==============================================================================
+
+  /**
+   * Fetches full message history for a given conversation ID
+   */
+  async fetchMessagesForConversation(conversationId) {
+    if (!conversationId) return [];
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.warn('fetchMessagesForConversation DB notice:', error.message);
+        return [];
+      }
+      return (data || []).map(mapSupabaseMessage).filter(Boolean);
+    } catch (err) {
+      console.warn('fetchMessagesForConversation exception:', err);
+      return [];
+    }
+  },
+
+  /**
+   * Sends a message in a conversation.
+   * Inserts into messages table and broadcasts immediately for zero-latency.
+   */
+  async sendMessage({
+    conversationId,
+    senderId,
+    senderEmail,
+    senderName,
+    text,
+    attachment,
+    status = 'delivered',
+    reaction = null,
+  }) {
+    if (!conversationId || !senderId) {
+      throw new Error('conversationId and senderId are required to send message.');
+    }
+
+    const now = new Date();
+    const tempId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+    const messagePayload = {
+      id: tempId,
+      conversationId,
+      senderId,
+      senderEmail: senderEmail || '',
+      senderName: senderName || '',
+      text: text || '',
+      attachment: attachment || null,
+      status,
+      reaction,
+      timestamp: formatTimestamp(now),
+      date: 'Today',
+      created_at: now.toISOString(),
+    };
+
+    // Broadcast immediately so recipient UI gets it instantaneously
+    await this.broadcastMessage(messagePayload);
+
+    // Save to Supabase Database
+    try {
+      const insertRow = {
+        conversation_id: conversationId,
+        sender_id: senderId,
+        text: text || '',
+        attachment: attachment || null,
+        status,
+        reaction,
+      };
+
+      const { data, error } = await supabase
+        .from('messages')
+        .insert([insertRow])
+        .select();
+
+      if (error) {
+        console.warn('Supabase DB message insert notice:', error.message);
+      } else if (data && data[0]) {
+        messagePayload.id = String(data[0].id);
+        messagePayload.created_at = data[0].created_at;
+      }
+    } catch (err) {
+      console.warn('Supabase DB insert exception:', err);
+    }
+
+    return messagePayload;
+  },
+
+  /**
+   * Subscribes to new messages for a specific conversation using Supabase Realtime.
+   * Cleanly unsubscribes from any previous conversation channel.
+   */
+  subscribeToConversationMessages(conversationId, onMessageReceived) {
+    if (!conversationId) return () => {};
+
+    // Clean up previous conversation subscription
+    if (activeConversationChannel) {
+      try {
+        supabase.removeChannel(activeConversationChannel);
+      } catch (e) {}
+      activeConversationChannel = null;
+    }
+
+    const channelName = `conversation-${conversationId}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `conversation_id=eq.${conversationId}`,
+        },
+        (payload) => {
+          if (payload?.new && typeof onMessageReceived === 'function') {
+            const mapped = mapSupabaseMessage(payload.new);
+            if (mapped) onMessageReceived(mapped);
+          }
+        }
+      )
+      .subscribe();
+
+    activeConversationChannel = channel;
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+        if (activeConversationChannel === channel) {
+          activeConversationChannel = null;
+        }
+      } catch (e) {}
+    };
+  },
+
+  // ==============================================================================
+  // 4. GLOBAL REALTIME HUB (Presence + Live Broadcasts)
+  // ==============================================================================
+
   initRealtimeHub(currentUser, { onPresenceChange, onMessageReceived, onStatusReceived, onStatusViewReceived }) {
     if (!currentUser) return () => {};
 
@@ -306,7 +552,6 @@ export const chatService = {
     const emailUuid = getEmailUuid(cleanEmail);
     const userUuid = currentUser.id && currentUser.id !== 'current_user' ? currentUser.id : emailUuid;
 
-    // Disconnect old channel if existing
     if (globalRealtimeChannel) {
       try {
         supabase.removeChannel(globalRealtimeChannel);
@@ -323,13 +568,12 @@ export const chatService = {
 
     globalRealtimeChannel = channel;
 
-    // A) Real-time Presence
+    // Presence Tracking
     channel
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState();
         const onlineUserIds = new Set();
         const onlineEmails = new Set();
-        const onlineUsernames = new Set();
 
         Object.values(state).forEach((presences) => {
           if (Array.isArray(presences)) {
@@ -337,129 +581,52 @@ export const chatService = {
               if (p.user_id) onlineUserIds.add(String(p.user_id).toLowerCase());
               if (p.email_uuid) onlineUserIds.add(String(p.email_uuid).toLowerCase());
               if (p.email) onlineEmails.add(String(p.email).toLowerCase().trim());
-              if (p.userId) onlineUsernames.add(String(p.userId).toLowerCase().trim().replace(/^@/, ''));
             });
           }
         });
 
         if (typeof onPresenceChange === 'function') {
-          onPresenceChange({ onlineUserIds, onlineEmails, onlineUsernames });
+          onPresenceChange({ onlineUserIds, onlineEmails });
         }
       })
-      // B) Instant Direct Chat Message Broadcast (Bypasses any DB/RLS permission barriers)
+      // Direct Broadcast Listener
       .on('broadcast', { event: 'bloom_message' }, ({ payload }) => {
         if (!payload) return;
-        const myEmail = cleanEmail;
-        const myUserId = (
-          currentUser.userId ||
-          currentUser.user_metadata?.userId ||
-          cleanEmail.split('@')[0] ||
-          ''
-        )
-          .toLowerCase()
-          .replace(/^@/, '');
 
-        const targetSenderEmail = payload.senderEmail?.toLowerCase().trim();
-        const targetSenderUserId = (payload.senderUserId || '')
-          .toLowerCase()
-          .trim()
-          .replace(/^@/, '');
-
+        // Skip if message was broadcast by myself (prevents duplicate self-messages)
         const isSender =
-          (targetSenderEmail && targetSenderEmail === myEmail) ||
-          (targetSenderUserId && targetSenderUserId === myUserId) ||
-          payload.senderId?.toLowerCase() === emailUuid.toLowerCase() ||
-          payload.senderId?.toLowerCase() === userUuid.toLowerCase();
+          payload.senderId?.toLowerCase() === userUuid.toLowerCase() ||
+          (payload.senderEmail && payload.senderEmail.toLowerCase() === cleanEmail);
 
-        // CRITICAL FIX: If message was sent by me, NEVER process as incoming! (Eliminates self-bouncing chat)
-        if (isSender) {
-          return;
-        }
+        if (isSender) return;
 
-        const targetReceiverEmail = payload.receiverEmail?.toLowerCase().trim();
-        const targetReceiverUserId = (payload.receiverUserId || '')
-          .toLowerCase()
-          .trim()
-          .replace(/^@/, '');
-
-        const isReceiver =
-          (targetReceiverEmail && targetReceiverEmail === myEmail) ||
-          (targetReceiverUserId && targetReceiverUserId === myUserId) ||
-          payload.receiverId?.toLowerCase() === emailUuid.toLowerCase() ||
-          payload.receiverId?.toLowerCase() === userUuid.toLowerCase();
-
-        if (isReceiver) {
-          if (typeof onMessageReceived === 'function') {
-            onMessageReceived(payload, { isSender: false, isReceiver: true });
-          }
+        if (typeof onMessageReceived === 'function') {
+          onMessageReceived(payload, { isSender: false, isReceiver: true });
         }
       })
-      // C) Real-Time Status Broadcast (When a user posts a new story/status)
+      // Status Broadcast
       .on('broadcast', { event: 'bloom_status' }, ({ payload }) => {
         if (!payload) return;
-        // Don't duplicate my own status from broadcast
         if (payload.userEmail?.toLowerCase().trim() !== cleanEmail) {
           if (typeof onStatusReceived === 'function') {
             onStatusReceived(payload);
           }
         }
       })
-      // D) Real-Time Status View Broadcast
+      // Status View Broadcast
       .on('broadcast', { event: 'bloom_status_view' }, ({ payload }) => {
         if (!payload) return;
         if (typeof onStatusViewReceived === 'function') {
           onStatusViewReceived(payload);
         }
       })
-      // E) Database changes fallback listener
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages' },
-        (change) => {
-          const row = change?.new;
-          if (!row) return;
-          const mapped = mapSupabaseMessage(row);
-          const targetReceiverEmail = mapped.receiverEmail?.toLowerCase().trim();
-          const targetSenderEmail = mapped.senderEmail?.toLowerCase().trim();
-          const myEmail = cleanEmail;
-
-          const isSender =
-            targetSenderEmail === myEmail ||
-            mapped.senderId?.toLowerCase() === emailUuid.toLowerCase() ||
-            mapped.senderId?.toLowerCase() === userUuid.toLowerCase();
-
-          // CRITICAL: Prevent self-bounce of my own inserted message
-          if (isSender) return;
-
-          const isReceiver =
-            targetReceiverEmail === myEmail ||
-            mapped.receiverId?.toLowerCase() === emailUuid.toLowerCase() ||
-            mapped.receiverId?.toLowerCase() === userUuid.toLowerCase();
-
-          if (isReceiver) {
-            if (typeof onMessageReceived === 'function') {
-              onMessageReceived(mapped, { isSender: false, isReceiver: true });
-            }
-          }
-        }
-      )
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-          const myUserId = (
-            currentUser.userId ||
-            currentUser.user_metadata?.userId ||
-            cleanEmail.split('@')[0] ||
-            ''
-          )
-            .toLowerCase()
-            .replace(/^@/, '');
-
           await channel.track({
             user_id: userUuid,
             email_uuid: emailUuid,
             email: cleanEmail,
-            userId: myUserId,
-            name: currentUser.name || myUserId || cleanEmail.split('@')[0],
+            name: currentUser.name || cleanEmail.split('@')[0],
             avatar: currentUser.avatar || '',
             online_at: new Date().toISOString(),
           });
@@ -477,7 +644,6 @@ export const chatService = {
     };
   },
 
-  // 5. Broadcast a message instantly to the recipient
   async broadcastMessage(messagePayload) {
     if (globalRealtimeChannel) {
       try {
@@ -487,12 +653,11 @@ export const chatService = {
           payload: messagePayload,
         });
       } catch (err) {
-        console.warn('Broadcast send error:', err);
+        console.warn('Broadcast send notice:', err);
       }
     }
   },
 
-  // 6. Broadcast a newly posted status to all contacts
   async broadcastStatus(statusPayload) {
     if (globalRealtimeChannel) {
       try {
@@ -502,12 +667,11 @@ export const chatService = {
           payload: statusPayload,
         });
       } catch (err) {
-        console.warn('Broadcast status error:', err);
+        console.warn('Broadcast status notice:', err);
       }
     }
   },
 
-  // 7. Broadcast viewing a status
   async broadcastStatusView(viewPayload) {
     if (globalRealtimeChannel) {
       try {
@@ -517,128 +681,86 @@ export const chatService = {
           payload: viewPayload,
         });
       } catch (err) {
-        console.warn('Broadcast status view error:', err);
+        console.warn('Broadcast status view notice:', err);
       }
     }
   },
 
-  // 8. Fetch Messages from Supabase Database between two email/user entities
-  async fetchMessages(senderEmailOrId, receiverEmailOrId) {
-    if (!senderEmailOrId || !receiverEmailOrId) return [];
+  // ==============================================================================
+  // 5. CACHE HELPERS (Offline & Fast Reload Resilience)
+  // ==============================================================================
 
-    const senderUuid = senderEmailOrId.includes('@')
-      ? getEmailUuid(senderEmailOrId)
-      : stringToUuid(senderEmailOrId);
-
-    const receiverUuid = receiverEmailOrId.includes('@')
-      ? getEmailUuid(receiverEmailOrId)
-      : stringToUuid(receiverEmailOrId);
-
+  saveMessagesToCache(conversationId, messages) {
     try {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*')
-        .or(
-          `and(sender_id.eq.${senderUuid},receiver_id.eq.${receiverUuid}),and(sender_id.eq.${receiverUuid},receiver_id.eq.${senderUuid})`
-        )
-        .order('created_at', { ascending: true });
-
-      if (error) {
-        console.warn('Supabase fetchMessages note:', error.message);
-        return [];
-      }
-
-      return (data || []).map(mapSupabaseMessage);
-    } catch (err) {
-      console.warn('fetchMessages exception:', err);
-      return [];
-    }
+      if (!conversationId) return;
+      localStorage.setItem(`bloom_msgs_${conversationId}`, JSON.stringify(messages || []));
+    } catch (e) {}
   },
 
-  // 9. Send Message: Broadcasts in real-time AND saves to Supabase database
-  async sendMessage({
-    senderId,
-    senderEmail,
-    senderUserId,
-    senderName,
-    receiverId,
-    receiverEmail,
-    receiverUserId,
-    text,
-    attachment,
-    status = 'delivered',
-    reaction = null,
-  }) {
-    const cleanSenderEmail = (senderEmail || '').toLowerCase().trim();
-    const cleanReceiverEmail = (receiverEmail || '').toLowerCase().trim();
-    const cleanSenderUserId = (senderUserId || '').toLowerCase().trim().replace(/^@/, '');
-    const cleanReceiverUserId = (receiverUserId || '').toLowerCase().trim().replace(/^@/, '');
-
-    const senderUuid = cleanSenderEmail
-      ? getEmailUuid(cleanSenderEmail)
-      : stringToUuid(cleanSenderUserId || senderId);
-
-    const receiverUuid = cleanReceiverEmail
-      ? getEmailUuid(cleanReceiverEmail)
-      : stringToUuid(cleanReceiverUserId || receiverId);
-
-    const now = new Date();
-    const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-
-    const messagePayload = {
-      id: messageId,
-      senderId: senderUuid,
-      senderEmail: cleanSenderEmail,
-      senderUserId: cleanSenderUserId,
-      senderName: senderName || cleanSenderUserId || cleanSenderEmail.split('@')[0],
-      receiverId: receiverUuid,
-      receiverEmail: cleanReceiverEmail,
-      receiverUserId: cleanReceiverUserId,
-      text: text || '',
-      attachment: attachment || null,
-      status,
-      reaction,
-      timestamp: formatTimestamp(now),
-      date: 'Today',
-      created_at: now.toISOString(),
-    };
-
-    // Step A: Deliver immediately via Real-Time Broadcast!
-    await this.broadcastMessage(messagePayload);
-
-    // Step B: Persist to Supabase Database (if available/configured)
-    const contentPayload = JSON.stringify({
-      text: text || '',
-      senderEmail: cleanSenderEmail,
-      receiverEmail: cleanReceiverEmail,
-      senderName: senderName || '',
-      attachment: attachment || null,
-      status,
-      reaction,
-    });
-
+  getMessagesFromCache(conversationId) {
     try {
-      const { data, error } = await supabase
-        .from('messages')
-        .insert([
-          {
-            sender_id: senderUuid,
-            receiver_id: receiverUuid,
-            content: contentPayload,
-          },
-        ])
-        .select();
-
-      if (error) {
-        console.warn('Supabase DB message insert note:', error.message);
-      } else if (data && data[0]) {
-        messagePayload.id = String(data[0].id);
-        messagePayload.created_at = data[0].created_at;
+      if (!conversationId) return [];
+      const saved = localStorage.getItem(`bloom_msgs_${conversationId}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
       }
-    } catch (err) {
-      console.warn('Supabase DB insert exception:', err);
-    }
+    } catch (e) {}
+    return [];
+  },
 
-    return messagePayload;
+  saveConversationsToCache(userKey, conversations) {
+    try {
+      if (!userKey) return;
+      localStorage.setItem(`bloom_convs_${userKey}`, JSON.stringify(conversations || []));
+    } catch (e) {}
+  },
+
+  getConversationsFromCache(userKey) {
+    try {
+      if (!userKey) return [];
+      const saved = localStorage.getItem(`bloom_convs_${userKey}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  },
+
+  saveMyStatusesToCache(userKey, statuses) {
+    try {
+      if (!userKey) return;
+      localStorage.setItem(`bloom_my_status_${userKey}`, JSON.stringify(statuses || []));
+    } catch (e) {}
+  },
+
+  getMyStatusesFromCache(userKey) {
+    try {
+      if (!userKey) return [];
+      const saved = localStorage.getItem(`bloom_my_status_${userKey}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  },
+
+  saveContactStatusesToCache(statuses) {
+    try {
+      localStorage.setItem('bloom_contact_statuses', JSON.stringify(statuses || []));
+    } catch (e) {}
+  },
+
+  getContactStatusesFromCache() {
+    try {
+      const saved = localStorage.getItem('bloom_contact_statuses');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
   },
 };

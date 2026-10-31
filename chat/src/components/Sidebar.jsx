@@ -20,9 +20,33 @@ export default function Sidebar({
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('All'); // 'All' | 'Unread' | 'Favorites'
 
-  // Filter conversations based on search and active filter
+  // Filter conversations based on search and active filter, with deduplication guarantee
   const filteredConversations = useMemo(() => {
-    return conversations.filter((conv) => {
+    // 1. Deduplicate conversations by other user's email or ID (no duplicate contacts)
+    const uniqueMap = new Map();
+    (conversations || []).forEach((conv) => {
+      if (!conv || !conv.user) return;
+      const key = (conv.user.email || conv.user.id || conv.id).toLowerCase().trim();
+      if (!uniqueMap.has(key)) {
+        uniqueMap.set(key, conv);
+      } else {
+        const existing = uniqueMap.get(key);
+        // Prefer the one with latest message/activity
+        const convTime = conv.lastActivity || 0;
+        const existTime = existing.lastActivity || 0;
+        if (convTime >= existTime || (conv.messages?.length || 0) > (existing.messages?.length || 0)) {
+          uniqueMap.set(key, {
+            ...conv,
+            pinned: existing.pinned || conv.pinned,
+            unreadCount: Math.max(existing.unreadCount || 0, conv.unreadCount || 0),
+          });
+        }
+      }
+    });
+
+    const uniqueList = Array.from(uniqueMap.values());
+
+    return uniqueList.filter((conv) => {
       // Filter by category/status
       if (activeFilter === 'Unread' && conv.unreadCount === 0) {
         return false;
@@ -34,14 +58,13 @@ export default function Sidebar({
       // Filter by search query
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
-      const nameMatch = conv.user.name.toLowerCase().includes(q);
-      const phoneMatch = conv.user.phone ? conv.user.phone.toLowerCase().includes(q) : false;
+      const nameMatch = conv.user.name?.toLowerCase().includes(q);
       const emailMatch = conv.user.email ? conv.user.email.toLowerCase().includes(q) : false;
       const lastMsg = conv.messages[conv.messages.length - 1];
-      const textMatch = lastMsg?.text.toLowerCase().includes(q);
+      const textMatch = lastMsg?.text?.toLowerCase().includes(q);
       const aboutMatch = conv.user.about?.toLowerCase().includes(q);
 
-      return nameMatch || phoneMatch || emailMatch || textMatch || aboutMatch;
+      return nameMatch || emailMatch || textMatch || aboutMatch;
     });
   }, [conversations, searchQuery, activeFilter]);
 

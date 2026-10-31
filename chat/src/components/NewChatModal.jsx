@@ -1,62 +1,102 @@
-import React, { useState } from 'react';
-import { X, UserPlus, AtSign, User, UserCheck } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Search, Mail, UserPlus, Check, Sparkles, MessageSquare } from 'lucide-react';
+import { chatService } from '../services/chatService.js';
 
-export default function NewChatModal({ isOpen, onClose, onStartChat }) {
-  const [name, setName] = useState('');
-  const [identifier, setIdentifier] = useState('');
+export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUser }) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState('');
+
+  // Reset modal state on open
+  useEffect(() => {
+    if (isOpen) {
+      setSearchQuery('');
+      setSearchResults([]);
+      setIsSearching(false);
+      setHasSearched(false);
+      setError('');
+    }
+  }, [isOpen]);
+
+  // Debounced search when user types email
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearchResults([]);
+      setHasSearched(false);
+      setIsSearching(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setIsSearching(true);
+      setError('');
+      try {
+        const results = await chatService.searchUsersByEmail(q, currentUser?.id);
+        // Exclude currently logged-in user from search results
+        const myEmail = (currentUser?.email || '').toLowerCase().trim();
+        const filtered = (results || []).filter(
+          (u) =>
+            u.id !== currentUser?.id &&
+            u.email?.toLowerCase().trim() !== myEmail
+        );
+        setSearchResults(filtered);
+        setHasSearched(true);
+      } catch (err) {
+        setError('Failed to search users. Please try again.');
+      } finally {
+        setIsSearching(false);
+      }
+    }, 280);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, currentUser?.id, currentUser?.email]);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    setError('');
-
-    const cleanName = name.trim();
-    const cleanId = identifier.trim().toLowerCase();
-
-    if (!cleanName) {
-      setError('Please enter contact name.');
-      return;
+  const handleSelect = (user) => {
+    if (onSelectUser) {
+      onSelectUser(user);
     }
-
-    if (!cleanId) {
-      setError('Please enter a User ID or Email address.');
-      return;
-    }
-
-    // Determine if it is an email or a custom User ID
-    const isEmail = cleanId.includes('@') && cleanId.includes('.');
-    const cleanUserId = isEmail
-      ? cleanId.split('@')[0].replace(/^@/, '')
-      : cleanId.replace(/^@/, '');
-    const cleanEmail = isEmail ? cleanId : `${cleanUserId}@bloom.chat`;
-
-    onStartChat({
-      name: cleanName,
-      userId: cleanUserId,
-      email: cleanEmail,
-      avatar: '', // Custom avatar set by user or initials
-    });
-
-    setName('');
-    setIdentifier('');
-    setError('');
     onClose();
   };
 
+  // Allow initiating chat with raw email if exact match isn't in profiles yet
+  const handleDirectEmailConnect = (e) => {
+    e.preventDefault();
+    const cleanEmail = searchQuery.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+    if (cleanEmail === (currentUser?.email || '').toLowerCase().trim()) {
+      setError('You cannot start a chat with yourself.');
+      return;
+    }
+
+    handleSelect({
+      id: null,
+      name: cleanEmail.split('@')[0],
+      email: cleanEmail,
+      avatar_url: '',
+      about: 'Available 🌸',
+    });
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-violet-100 overflow-hidden animate-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 backdrop-blur-xs animate-in fade-in duration-200">
+      <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-violet-100 overflow-hidden flex flex-col max-h-[85vh]">
         {/* Header */}
-        <div className="p-5 pb-4 bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 text-white flex items-center justify-between">
+        <div className="p-5 pb-4 bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 text-white flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center">
+            <div className="w-9 h-9 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shadow-xs">
               <UserPlus className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-bold">New Chat & Contact</h2>
-              <p className="text-xs text-violet-100">Save contact via User ID or Email 🌸</p>
+              <h2 className="text-lg font-bold">New Conversation</h2>
+              <p className="text-xs text-violet-100">Find registered users by email address 🌸</p>
             </div>
           </div>
           <button
@@ -67,78 +107,124 @@ export default function NewChatModal({ isOpen, onClose, onStartChat }) {
           </button>
         </div>
 
-        {/* Content Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        {/* Search Input Bar */}
+        <div className="p-4 border-b border-stone-100 flex-shrink-0">
+          <form onSubmit={handleDirectEmailConnect}>
+            <div className="relative flex items-center">
+              <Search className="w-4 h-4 text-violet-500 absolute left-3.5 pointer-events-none" />
+              <input
+                type="text"
+                autoFocus
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search registered user by email..."
+                className="w-full bg-stone-50 pl-10 pr-9 py-2.5 rounded-2xl text-xs sm:text-sm text-stone-800 placeholder:text-stone-400 border border-stone-200 focus:outline-none focus:bg-white focus:border-violet-400 focus:ring-2 focus:ring-violet-100 transition-all font-medium"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 p-1 rounded-full text-stone-400 hover:text-stone-700"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </form>
+
           {error && (
-            <div className="p-2.5 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl font-medium">
-              {error}
+            <p className="mt-2 text-xs text-rose-600 font-medium px-1">{error}</p>
+          )}
+        </div>
+
+        {/* Results Container */}
+        <div className="p-4 overflow-y-auto flex-1 space-y-2">
+          {isSearching && (
+            <div className="py-8 text-center text-xs text-stone-400 font-medium flex items-center justify-center gap-2">
+              <span className="w-4 h-4 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+              <span>Searching Bloom users...</span>
             </div>
           )}
 
-          {/* Contact Name */}
-          <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1.5">
-              Contact Name *
-            </label>
-            <div className="relative">
-              <User className="w-4 h-4 text-violet-400 absolute left-3 top-3 pointer-events-none" />
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  setError('');
-                }}
-                placeholder="Name"
-                required
-                className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-stone-200 text-sm focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 text-stone-800 font-medium"
-              />
-            </div>
-          </div>
+          {!isSearching && searchResults.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-bold text-stone-400 uppercase tracking-wider px-1 mb-2">
+                Registered Users Found ({searchResults.length})
+              </p>
+              {searchResults.map((user) => (
+                <div
+                  key={user.id}
+                  onClick={() => handleSelect(user)}
+                  className="p-3 rounded-2xl border border-stone-100 hover:border-violet-200 bg-stone-50/50 hover:bg-violet-50/50 transition-all cursor-pointer flex items-center justify-between group"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    {user.avatar_url ? (
+                      <img
+                        src={user.avatar_url}
+                        alt={user.name}
+                        className="w-11 h-11 rounded-full object-cover ring-2 ring-violet-200 group-hover:ring-violet-400 transition-all shadow-xs flex-shrink-0"
+                      />
+                    ) : (
+                      <div className="w-11 h-11 rounded-full bg-gradient-to-tr from-violet-500 to-indigo-600 text-white font-bold text-sm flex items-center justify-center ring-2 ring-violet-200 group-hover:ring-violet-400 transition-all shadow-xs flex-shrink-0">
+                        {user.name?.slice(0, 2).toUpperCase() || 'U'}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-stone-900 group-hover:text-violet-950 truncate">
+                        {user.name}
+                      </p>
+                      <p className="text-xs text-stone-500 truncate">{user.email}</p>
+                      {user.about && (
+                        <p className="text-[11px] text-stone-400 truncate mt-0.5">
+                          {user.about}
+                        </p>
+                      )}
+                    </div>
+                  </div>
 
-          {/* Contact User ID or Email */}
-          <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1.5 flex items-center gap-1">
-              <AtSign className="w-3.5 h-3.5 text-violet-600" />
-              <span>User ID or Email *</span>
-            </label>
-            <div className="relative">
-              <AtSign className="w-4 h-4 text-violet-400 absolute left-3 top-3 pointer-events-none" />
-              <input
-                type="text"
-                value={identifier}
-                onChange={(e) => {
-                  setIdentifier(e.target.value);
-                  setError('');
-                }}
-                placeholder="e.g. keerthi or user@bloom.chat"
-                required
-                className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-stone-200 text-sm focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 text-stone-800 font-medium"
-              />
+                  <button
+                    type="button"
+                    className="px-3 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 flex-shrink-0"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    <span>Chat</span>
+                  </button>
+                </div>
+              ))}
             </div>
-            <p className="text-[11px] text-stone-400 mt-1">
-              Enter their unique User ID or Email to start chatting immediately.
-            </p>
-          </div>
+          )}
 
-          {/* Actions */}
-          <div className="pt-2 flex items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-stone-600 hover:text-stone-800 hover:bg-stone-100 rounded-xl transition-colors cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-5 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 rounded-xl shadow-md shadow-violet-500/20 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
-            >
-              <UserCheck className="w-4 h-4" />
-              <span>Save & Start Chat</span>
-            </button>
-          </div>
-        </form>
+          {!isSearching && hasSearched && searchResults.length === 0 && (
+            <div className="py-8 text-center px-4">
+              <div className="w-12 h-12 rounded-full bg-violet-50 text-violet-600 flex items-center justify-center mx-auto mb-3">
+                <Mail className="w-6 h-6" />
+              </div>
+              <p className="text-sm font-bold text-stone-800">No matching user found</p>
+              <p className="text-xs text-stone-500 mt-1 max-w-xs mx-auto leading-relaxed">
+                No user registered with "{searchQuery}". You can invite them or connect directly.
+              </p>
+              {searchQuery.includes('@') && (
+                <button
+                  type="button"
+                  onClick={handleDirectEmailConnect}
+                  className="mt-4 px-4 py-2 rounded-xl bg-violet-100 hover:bg-violet-200 text-violet-800 text-xs font-bold transition-all inline-flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-violet-600" />
+                  <span>Start Chat with {searchQuery.trim()}</span>
+                </button>
+              )}
+            </div>
+          )}
+
+          {!searchQuery && !hasSearched && (
+            <div className="py-10 text-center px-6 text-stone-400">
+              <Search className="w-8 h-8 mx-auto mb-2 text-violet-300" />
+              <p className="text-xs font-medium text-stone-500">
+                Type an email address above to find your friends on Bloom.
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -13,6 +13,7 @@ export default function MessageInput({ onSendMessage, disabled }) {
   const attachmentMenuRef = useRef(null);
   const imageInputRef = useRef(null);
   const docInputRef = useRef(null);
+  const isSendingRef = useRef(false);
 
   // Close menus on outside click
   useEffect(() => {
@@ -39,7 +40,9 @@ export default function MessageInput({ onSendMessage, disabled }) {
   const handleSend = () => {
     const trimmed = text.trim();
     if (!trimmed && !attachmentPreview) return;
+    if (isSendingRef.current) return;
 
+    isSendingRef.current = true;
     onSendMessage(trimmed, attachmentPreview);
     setText('');
     setAttachmentPreview(null);
@@ -49,6 +52,10 @@ export default function MessageInput({ onSendMessage, disabled }) {
     if (inputRef.current) {
       inputRef.current.focus();
     }
+
+    setTimeout(() => {
+      isSendingRef.current = false;
+    }, 350);
   };
 
   const handleKeyDown = (e) => {
