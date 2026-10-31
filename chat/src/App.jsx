@@ -724,7 +724,8 @@ export default function App() {
       id: convId,
       user: {
         id: targetUserId || convId,
-        name: contactData.name || targetEmail.split('@')[0] || 'Bloom Contact 🌸',
+        name: contactData.name || contactData.userId || targetEmail.split('@')[0] || 'user',
+        userId: (contactData.userId || contactData.name || targetEmail.split('@')[0] || 'user').replace(/^@/, ''),
         email: targetEmail,
         avatar: contactData.avatar_url || contactData.avatar || '',
         about: contactData.about || 'Available 🌸',

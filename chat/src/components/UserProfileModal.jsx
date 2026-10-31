@@ -58,14 +58,9 @@ export default function UserProfileModal({
   const hasPhoto = Boolean(currentAvatar && currentAvatar.trim());
 
   // Helper to get initials
-  const getInitials = (name) => {
-    if (!name) return 'U';
-    return name
-      .split(' ')
-      .map((n) => n[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
+  const getInitials = (val) => {
+    if (!val) return 'U';
+    return val.replace(/^@/, '').slice(0, 2).toUpperCase();
   };
 
   // Apply avatar update immediately
@@ -114,10 +109,13 @@ export default function UserProfileModal({
   // Save changes
   const handleSave = (e) => {
     e?.preventDefault();
+    const cleanUsername = (formData.userId || '').toLowerCase().trim().replace(/^@/, '');
     if (onUpdateCurrentUser && isCurrentUser) {
       onUpdateCurrentUser({
         ...user,
         ...formData,
+        userId: cleanUsername,
+        name: cleanUsername,
       });
     }
     setIsEditing(false);
@@ -195,12 +193,12 @@ export default function UserProfileModal({
                 {hasPhoto ? (
                   <img
                     src={currentAvatar}
-                    alt={formData.name || user.name}
+                    alt={`@${displayUserId}`}
                     className="w-full h-full object-cover"
                   />
                 ) : (
                   <div className="w-full h-full bg-gradient-to-tr from-violet-500 via-purple-500 to-indigo-500 text-white font-extrabold text-3xl flex items-center justify-center select-none">
-                    {getInitials(formData.name || user.name)}
+                    {getInitials(displayUserId)}
                   </div>
                 )}
               </div>
@@ -278,13 +276,10 @@ export default function UserProfileModal({
               </span>
             )}
 
-            {/* Name & User ID */}
+            {/* Username Heading */}
             {!isEditing && (
               <div className="mt-1">
-                <h3 className="text-xl font-extrabold text-stone-900">{user.name}</h3>
-                <span className="inline-block text-xs font-semibold text-violet-600 bg-violet-50 px-2.5 py-0.5 rounded-full mt-1 border border-violet-100">
-                  @{displayUserId}
-                </span>
+                <h3 className="text-xl font-extrabold text-stone-900">@{displayUserId}</h3>
               </div>
             )}
           </div>
@@ -320,14 +315,14 @@ export default function UserProfileModal({
                 )}
               </div>
 
-              {/* User ID & Email */}
+              {/* Username & Email */}
               <div className="space-y-2.5 py-2 border-t border-b border-stone-100 text-xs font-medium">
                 <div className="flex items-center gap-3 text-stone-700">
                   <div className="w-8 h-8 rounded-xl bg-violet-100 flex items-center justify-center text-violet-600 flex-shrink-0 shadow-xs">
                     <AtSign className="w-4 h-4" />
                   </div>
                   <div>
-                    <span className="block text-[10px] text-stone-400 uppercase font-bold">User ID</span>
+                    <span className="block text-[10px] text-stone-400 uppercase font-bold">Username</span>
                     <span className="font-semibold text-stone-800">@{displayUserId}</span>
                   </div>
                 </div>
@@ -346,40 +341,27 @@ export default function UserProfileModal({
               </div>
             </div>
           ) : (
-            /* Edit Mode: Set User ID, Name, About */
+            /* Edit Mode: Set Username & About (No separate Name field) */
             <form onSubmit={handleSave} className="space-y-3.5 pt-1">
-              {/* Full Name */}
+              {/* Username */}
               <div>
                 <label className="block text-[11px] font-bold text-stone-700 uppercase tracking-wider mb-1">
-                  Name
-                </label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="Your Name"
-                  required
-                  className="w-full bg-stone-50 pl-3 pr-3 py-2 rounded-xl text-xs sm:text-sm text-stone-800 border border-stone-200 focus:outline-none focus:bg-white focus:border-violet-400 focus:ring-2 focus:ring-violet-200 font-medium"
-                />
-              </div>
-
-              {/* Custom User ID */}
-              <div>
-                <label className="block text-[11px] font-bold text-stone-700 uppercase tracking-wider mb-1">
-                  User ID (Username)
+                  Username
                 </label>
                 <div className="relative flex items-center">
-                  <span className="text-violet-400 font-bold absolute left-3 select-none text-xs">@</span>
+                  <span className="text-violet-500 font-bold absolute left-3 select-none text-xs">@</span>
                   <input
                     type="text"
                     value={formData.userId}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const val = e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, '');
                       setFormData({
                         ...formData,
-                        userId: e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, ''),
-                      })
-                    }
-                    placeholder="your_userid"
+                        userId: val,
+                        name: val,
+                      });
+                    }}
+                    placeholder="username"
                     required
                     className="w-full bg-stone-50 pl-7 pr-3 py-2 rounded-xl text-xs sm:text-sm text-stone-800 border border-stone-200 focus:outline-none focus:bg-white focus:border-violet-400 focus:ring-2 focus:ring-violet-200 font-medium"
                   />

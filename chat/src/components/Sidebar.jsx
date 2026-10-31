@@ -191,7 +191,7 @@ export default function Sidebar({
                     />
                   ) : (
                     <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-violet-500 to-indigo-600 text-white font-bold text-sm flex items-center justify-center ring-2 ring-violet-200 group-hover:ring-violet-400 transition-all shadow-xs">
-                      {conv.user.name?.slice(0, 2).toUpperCase() || 'U'}
+                      {((conv.user.userId || conv.user.name || 'U')).replace(/^@/, '').slice(0, 2).toUpperCase()}
                     </div>
                   )}
                   {/* Show indicator ONLY when contact is online */}
@@ -209,13 +209,8 @@ export default function Sidebar({
                           isSelected ? 'text-violet-950 font-bold' : 'text-stone-900'
                         }`}
                       >
-                        {conv.user.name}
+                        @{((conv.user.userId || conv.user.name || conv.user.email?.split('@')[0] || '')).replace(/^@/, '')}
                       </span>
-                      {conv.user.userId && (
-                        <span className="text-[11px] text-stone-400 font-normal">
-                          @{conv.user.userId.replace(/^@/, '')}
-                        </span>
-                      )}
                       {/* Pin / Unpin Button */}
                       <button
                         type="button"
@@ -242,10 +237,10 @@ export default function Sidebar({
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onDeleteConversation && onDeleteConversation(conv.id, conv.user.name);
+                          onDeleteConversation && onDeleteConversation(conv.id, (conv.user.userId || conv.user.name || '').replace(/^@/, ''));
                         }}
                         className="p-1 rounded-md opacity-0 group-hover:opacity-100 text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition-all cursor-pointer flex-shrink-0"
-                        title={`Delete chat with ${conv.user.name}`}
+                        title={`Delete chat with @${((conv.user.userId || conv.user.name || '')).replace(/^@/, '')}`}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>

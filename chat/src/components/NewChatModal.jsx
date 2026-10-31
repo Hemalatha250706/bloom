@@ -76,9 +76,11 @@ export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUse
       return;
     }
 
+    const defaultHandle = cleanEmail.split('@')[0];
     handleSelect({
       id: null,
-      name: cleanEmail.split('@')[0],
+      name: defaultHandle,
+      userId: defaultHandle,
       email: cleanEmail,
       avatar_url: '',
       about: 'Available 🌸',
@@ -166,12 +168,12 @@ export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUse
                       />
                     ) : (
                       <div className="w-11 h-11 rounded-full bg-gradient-to-tr from-violet-500 to-indigo-600 text-white font-bold text-sm flex items-center justify-center ring-2 ring-violet-200 group-hover:ring-violet-400 transition-all shadow-xs flex-shrink-0">
-                        {user.name?.slice(0, 2).toUpperCase() || 'U'}
+                        {((user.userId || user.username || user.name || 'U')).replace(/^@/, '').slice(0, 2).toUpperCase()}
                       </div>
                     )}
                     <div className="min-w-0">
                       <p className="text-sm font-bold text-stone-900 group-hover:text-violet-950 truncate">
-                        {user.name}
+                        @{((user.userId || user.username || user.name || user.email?.split('@')[0] || '')).replace(/^@/, '')}
                       </p>
                       <p className="text-xs text-stone-500 truncate">{user.email}</p>
                       {user.about && (

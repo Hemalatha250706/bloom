@@ -65,8 +65,7 @@ export default function AuthPage({ onLoginSuccess }) {
   }, [view, resetEmail]);
 
   // Sign Up States
-  const [signupName, setSignupName] = useState('');
-  const [signupUserId, setSignupUserId] = useState('');
+  const [signupUsername, setSignupUsername] = useState('');
   const [signupEmail, setSignupEmail] = useState('');
   const [signupPhone, setSignupPhone] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
@@ -86,8 +85,7 @@ export default function AuthPage({ onLoginSuccess }) {
   useEffect(() => {
     setEmail('');
     setPassword('');
-    setSignupName('');
-    setSignupUserId('');
+    setSignupUsername('');
     setSignupEmail('');
     setSignupPhone('');
     setSignupPassword('');
@@ -103,8 +101,7 @@ export default function AuthPage({ onLoginSuccess }) {
     setSuccessMessage('');
     setEmail('');
     setPassword('');
-    setSignupName('');
-    setSignupUserId('');
+    setSignupUsername('');
     setSignupEmail('');
     setSignupPhone('');
     setSignupPassword('');
@@ -226,14 +223,15 @@ export default function AuthPage({ onLoginSuccess }) {
     }
   };
 
-  // Handle Sign Up Submit (Supabase Auth Register with Custom User ID)
+  // Handle Sign Up Submit (Username only + Email + Password)
   const handleSignUp = async (e) => {
     e?.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
 
-    if (!signupName.trim()) {
-      setErrorMessage('Please enter your full name.');
+    const cleanUsername = signupUsername.toLowerCase().trim().replace(/^@/, '');
+    if (!cleanUsername) {
+      setErrorMessage('Please enter a username.');
       return;
     }
     if (!signupEmail.trim() || !signupEmail.includes('@')) {
@@ -251,43 +249,40 @@ export default function AuthPage({ onLoginSuccess }) {
 
     setIsLoading(true);
     const cleanEmail = signupEmail.trim().toLowerCase();
-    const cleanName = signupName.trim();
-    const cleanUserId = (signupUserId || cleanEmail.split('@')[0])
-      .toLowerCase()
-      .trim()
-      .replace(/^@/, '');
 
     try {
       const data = await authService.signUp(cleanEmail, signupPassword, {
-        name: cleanName,
-        userId: cleanUserId,
-        display_name: cleanName,
+        name: cleanUsername,
+        username: cleanUsername,
+        userId: cleanUsername,
+        display_name: cleanUsername,
       });
       setIsLoading(false);
 
       // Register into local directory
       try {
         const dir = JSON.parse(localStorage.getItem('bloom_user_directory') || '{}');
-        dir[cleanUserId] = cleanEmail;
+        dir[cleanUsername] = cleanEmail;
         localStorage.setItem('bloom_user_directory', JSON.stringify(dir));
       } catch (e) {}
 
       const loggedInUser = data?.user || {
         id: getEmailUuid(cleanEmail),
         email: cleanEmail,
-        userId: cleanUserId,
-        name: cleanName,
-        user_metadata: { name: cleanName, userId: cleanUserId },
+        userId: cleanUsername,
+        name: cleanUsername,
+        user_metadata: { name: cleanUsername, username: cleanUsername, userId: cleanUsername },
       };
       if (onLoginSuccess) {
         onLoginSuccess({
           ...loggedInUser,
-          userId: cleanUserId,
-          name: cleanName,
+          userId: cleanUsername,
+          name: cleanUsername,
           user_metadata: {
             ...(loggedInUser.user_metadata || {}),
-            name: cleanName,
-            userId: cleanUserId,
+            name: cleanUsername,
+            username: cleanUsername,
+            userId: cleanUsername,
           },
         });
       }
@@ -298,9 +293,9 @@ export default function AuthPage({ onLoginSuccess }) {
         const authed = {
           id: getEmailUuid(cleanEmail),
           email: cleanEmail,
-          userId: cleanUserId,
-          name: cleanName,
-          user_metadata: { name: cleanName, userId: cleanUserId },
+          userId: cleanUsername,
+          name: cleanUsername,
+          user_metadata: { name: cleanUsername, username: cleanUsername, userId: cleanUsername },
         };
         if (onLoginSuccess) {
           onLoginSuccess(authed);
@@ -697,50 +692,30 @@ export default function AuthPage({ onLoginSuccess }) {
             )}
 
             <form onSubmit={handleSignUp} className="space-y-3.5" autoComplete="off">
-              {/* Full Name */}
+              {/* Username (Single identity - no separate name) */}
               <div>
                 <label className="block text-xs font-bold text-stone-700 mb-1">
-                  Full Name
+                  Username
                 </label>
                 <div className="relative flex items-center">
-                  <User className="w-4 h-4 text-violet-400 absolute left-3.5 pointer-events-none" />
-                  <input
-                    type="text"
-                    name="bloom_new_name"
-                    autoComplete="off"
-                    value={signupName}
-                    onChange={(e) => setSignupName(e.target.value)}
-                    placeholder="Enter your name"
-                    required
-                    className="w-full bg-stone-50/80 pl-10 pr-4 py-2.5 rounded-xl text-xs sm:text-sm text-stone-800 placeholder:text-stone-400 border border-stone-200 focus:outline-none focus:bg-white focus:border-violet-400 focus:ring-2 focus:ring-violet-200 transition-all font-medium"
-                  />
-                </div>
-              </div>
-
-              {/* Custom User ID (Username) */}
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">
-                  User ID (Username)
-                </label>
-                <div className="relative flex items-center">
-                  <span className="text-violet-400 font-bold absolute left-3.5 pointer-events-none text-sm select-none">
+                  <span className="text-violet-500 font-bold absolute left-3.5 pointer-events-none text-sm select-none">
                     @
                   </span>
                   <input
                     type="text"
-                    name="bloom_new_userid"
+                    name="bloom_new_username"
                     autoComplete="off"
-                    value={signupUserId}
+                    value={signupUsername}
                     onChange={(e) =>
-                      setSignupUserId(e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, ''))
+                      setSignupUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, ''))
                     }
-                    placeholder="e.g. keerthi, alex_24"
+                    placeholder="Choose your username (e.g. keerthi)"
                     required
                     className="w-full bg-stone-50/80 pl-9 pr-4 py-2.5 rounded-xl text-xs sm:text-sm text-stone-800 placeholder:text-stone-400 border border-stone-200 focus:outline-none focus:bg-white focus:border-violet-400 focus:ring-2 focus:ring-violet-200 transition-all font-medium"
                   />
                 </div>
                 <p className="text-[10px] text-stone-400 mt-0.5">
-                  Friends can search and message you using this User ID.
+                  Your unique username on Bloom.
                 </p>
               </div>
 

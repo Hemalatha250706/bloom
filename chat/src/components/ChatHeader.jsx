@@ -61,12 +61,12 @@ export default function ChatHeader({
           {activeUser.avatar ? (
             <img
               src={activeUser.avatar}
-              alt={activeUser.name}
+              alt={activeUser.userId || activeUser.name}
               className="w-11 h-11 rounded-full object-cover ring-2 ring-violet-300 group-hover:ring-violet-500 transition-all shadow-xs"
             />
           ) : (
             <div className="w-11 h-11 rounded-full bg-gradient-to-tr from-violet-500 to-purple-600 text-white font-bold text-sm flex items-center justify-center ring-2 ring-violet-300 group-hover:ring-violet-500 transition-all shadow-xs">
-              {activeUser.name?.slice(0, 2).toUpperCase() || 'U'}
+              {((activeUser.userId || activeUser.name || 'U')).replace(/^@/, '').slice(0, 2).toUpperCase()}
             </div>
           )}
           {/* Show green dot ONLY if online */}
@@ -75,17 +75,12 @@ export default function ChatHeader({
           )}
         </div>
 
-        {/* Name and Status */}
+        {/* Username and Status */}
         <div className="cursor-pointer" onClick={onOpenProfile}>
           <div className="flex items-center gap-1.5">
             <h2 className="font-bold text-stone-900 text-sm sm:text-base leading-tight group-hover:text-violet-800 transition-colors">
-              {activeUser.name}
+              @{((activeUser.userId || activeUser.name || activeUser.email?.split('@')[0] || '')).replace(/^@/, '')}
             </h2>
-            {activeUser.userId && (
-              <span className="text-xs text-stone-400 font-normal">
-                @{activeUser.userId.replace(/^@/, '')}
-              </span>
-            )}
             {isPinned && (
               <button
                 type="button"
@@ -124,7 +119,7 @@ export default function ChatHeader({
       {/* Right: Actions */}
       <div className="flex items-center gap-1.5 sm:gap-2">
         <button
-          onClick={() => onTriggerCall && onTriggerCall('audio', activeUser.name)}
+          onClick={() => onTriggerCall && onTriggerCall('audio', (activeUser.userId || activeUser.name || '').replace(/^@/, ''))}
           className="p-2 rounded-full text-stone-600 hover:text-violet-800 hover:bg-violet-100 transition-colors"
           title="Start voice call"
         >
@@ -132,7 +127,7 @@ export default function ChatHeader({
         </button>
 
         <button
-          onClick={() => onTriggerCall && onTriggerCall('video', activeUser.name)}
+          onClick={() => onTriggerCall && onTriggerCall('video', (activeUser.userId || activeUser.name || '').replace(/^@/, ''))}
           className="p-2 rounded-full text-stone-600 hover:text-purple-800 hover:bg-purple-100 transition-colors"
           title="Start video call"
         >
@@ -194,7 +189,7 @@ export default function ChatHeader({
               <button
                 onClick={() => {
                   setShowMenu(false);
-                  alert(`Notifications muted for ${activeUser.name}`);
+                  alert(`Notifications muted for @${((activeUser.userId || activeUser.name || '')).replace(/^@/, '')}`);
                 }}
                 className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-stone-700 hover:bg-purple-50 hover:text-purple-800 transition-colors"
               >

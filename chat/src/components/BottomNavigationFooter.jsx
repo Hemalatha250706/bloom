@@ -16,14 +16,15 @@ export default function BottomNavigationFooter({
   onLogout,
   unreadCount = 0,
 }) {
-  const userInitials = currentUser?.name
-    ? currentUser.name
-        .split(' ')
-        .map((n) => n[0])
-        .slice(0, 2)
-        .join('')
-        .toUpperCase()
-    : 'U';
+  const userInitials = (
+    currentUser?.userId ||
+    currentUser?.name ||
+    currentUser?.email?.split('@')[0] ||
+    'U'
+  )
+    .replace(/^@/, '')
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
     <footer className="w-full bg-white/95 border-t border-violet-100/90 backdrop-blur-md px-2 py-2 flex items-center justify-around z-20 flex-shrink-0 select-none shadow-xs">

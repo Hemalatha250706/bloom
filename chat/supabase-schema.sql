@@ -16,6 +16,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
+  username TEXT,
   email TEXT,
   phone TEXT,
   avatar_url TEXT,
@@ -25,6 +26,9 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Ensure username column exists
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS username TEXT;
 
 -- Index on email for fast email search
 CREATE INDEX IF NOT EXISTS idx_profiles_email ON public.profiles(email);

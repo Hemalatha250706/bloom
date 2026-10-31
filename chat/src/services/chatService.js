@@ -363,16 +363,20 @@ export const chatService = {
           }
         } catch (e) {}
 
-        const contactName =
+        const rawUsername =
+          otherProfile?.username ||
           otherProfile?.name ||
           otherProfile?.email?.split('@')[0] ||
-          'Bloom Contact 🌸';
+          'user';
+        const cleanHandle = rawUsername.replace(/^@/, '');
 
         results.push({
           id: convId,
           user: {
             id: otherUserId || convId,
-            name: contactName,
+            name: cleanHandle,
+            userId: cleanHandle,
+            username: cleanHandle,
             email: otherProfile?.email || '',
             avatar: otherProfile?.avatar_url || '',
             about: otherProfile?.about || 'Available 🌸',
