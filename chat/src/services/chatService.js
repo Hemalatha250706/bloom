@@ -250,47 +250,146 @@ export const chatService = {
   },
 
   /**
-   * Search registered users by username (case-insensitive)
-   * Excludes the currently logged-in user from search results.
+   * Fetch all registered users in Bloom
+   * Queries Supabase profiles, merges local directory and registered cache,
+   * and excludes currently logged-in user.
+   */
+  async fetchRegisteredUsers(currentUserId) {
+    const usersMap = new Map();
+
+    // 1. Try querying Supabase public.profiles table
+    try {
+      let query = supabase
+        .from('profiles')
+        .select('id, name, username, email, avatar_url, about, status, status_emoji, status_text, created_at')
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (currentUserId && currentUserId !== 'current_user') {
+        query = query.neq('id', currentUserId);
+      }
+
+      const { data, error } = await query;
+      if (!error && Array.isArray(data)) {
+        data.forEach((p) => {
+          const handle = (p.username || p.name || p.email?.split('@')[0] || '').toLowerCase().trim().replace(/^@/, '');
+          if (handle) {
+            usersMap.set(handle, {
+              id: p.id,
+              name: handle,
+              username: handle,
+              userId: handle,
+              email: p.email || `${handle}@bloom.chat`,
+              avatar_url: p.avatar_url || '',
+              status_emoji: p.status_emoji || '🌸',
+              status_text: p.status_text || p.about || 'Available',
+              about: p.about || 'Available 🌸',
+              status: p.status || 'offline',
+            });
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('fetchRegisteredUsers DB notice:', e);
+    }
+
+    // 2. Merge local registered users cache (bloom_registered_users)
+    try {
+      const cached = JSON.parse(localStorage.getItem('bloom_registered_users') || '[]');
+      if (Array.isArray(cached)) {
+        cached.forEach((u) => {
+          const handle = (u.username || u.userId || u.name || '').toLowerCase().trim().replace(/^@/, '');
+          if (handle && !usersMap.has(handle)) {
+            usersMap.set(handle, {
+              id: u.id || getEmailUuid(u.email || handle),
+              name: handle,
+              username: handle,
+              userId: handle,
+              email: u.email || `${handle}@bloom.chat`,
+              avatar_url: u.avatar_url || u.avatar || '',
+              status_emoji: u.status_emoji || '🌸',
+              status_text: u.status_text || u.about || 'Available',
+              about: u.about || 'Available 🌸',
+              status: u.status || 'offline',
+            });
+          }
+        });
+      }
+    } catch (e) {}
+
+    // 3. Merge user directory (bloom_user_directory)
+    try {
+      const dir = JSON.parse(localStorage.getItem('bloom_user_directory') || '{}');
+      Object.entries(dir).forEach(([handleRaw, emailRaw]) => {
+        const handle = handleRaw.toLowerCase().trim().replace(/^@/, '');
+        if (handle && !usersMap.has(handle)) {
+          const email = (emailRaw || `${handle}@bloom.chat`).toLowerCase().trim();
+          usersMap.set(handle, {
+            id: getEmailUuid(email),
+            name: handle,
+            username: handle,
+            userId: handle,
+            email: email,
+            avatar_url: '',
+            status_emoji: '🌸',
+            status_text: 'Available',
+            about: 'Available 🌸',
+            status: 'offline',
+          });
+        }
+      });
+    } catch (e) {}
+
+    // 4. Default demo users so there are always verified contacts to chat with
+    const defaultDemos = [
+      { username: 'alex', email: 'alex@bloom.chat', about: 'Hey there! I am using Bloom 🌸' },
+      { username: 'sam', email: 'sam@bloom.chat', about: 'Living serenely ✨' },
+      { username: 'keerthi', email: 'keerthi@bloom.chat', about: 'Mindful messaging 🌸' },
+    ];
+    defaultDemos.forEach((d) => {
+      if (!usersMap.has(d.username)) {
+        usersMap.set(d.username, {
+          id: getEmailUuid(d.email),
+          name: d.username,
+          username: d.username,
+          userId: d.username,
+          email: d.email,
+          avatar_url: '',
+          status_emoji: '🌸',
+          status_text: d.about,
+          about: d.about,
+          status: 'offline',
+        });
+      }
+    });
+
+    // 5. Exclude currently logged-in user
+    if (currentUserId) {
+      usersMap.forEach((u, k) => {
+        if (u.id === currentUserId) {
+          usersMap.delete(k);
+        }
+      });
+    }
+
+    return Array.from(usersMap.values());
+  },
+
+  /**
+   * Search registered users by username or name (case-insensitive)
+   * If query is empty, returns all registered users.
    */
   async searchUsers(searchQuery, currentUserId) {
+    const allUsers = await this.fetchRegisteredUsers(currentUserId);
     const query = (searchQuery || '').trim().toLowerCase().replace(/^@/, '');
-    if (!query) return [];
+    if (!query) return allUsers;
 
-    try {
-      let req = supabase
-        .from('profiles')
-        .select('id, name, username, avatar_url, about, status, status_emoji, status_text')
-        .or(`username.ilike.%${query}%,name.ilike.%${query}%,email.ilike.%${query}%`)
-        .limit(15);
-
-      if (currentUserId) {
-        req = req.neq('id', currentUserId);
-      }
-
-      const { data, error } = await req;
-      if (error) {
-        console.warn('searchUsers DB notice:', error.message);
-        return [];
-      }
-      return (data || []).map((u) => {
-        const handle = (u.username || u.name || '').replace(/^@/, '');
-        return {
-          id: u.id,
-          name: handle,
-          username: handle,
-          userId: handle,
-          avatar_url: u.avatar_url,
-          status_emoji: u.status_emoji || '🌸',
-          status_text: u.status_text || u.about || 'Available',
-          about: u.about || 'Available',
-          status: u.status || 'offline',
-        };
-      });
-    } catch (err) {
-      console.warn('searchUsers exception:', err);
-      return [];
-    }
+    return allUsers.filter(
+      (u) =>
+        (u.username && u.username.toLowerCase().includes(query)) ||
+        (u.name && u.name.toLowerCase().includes(query)) ||
+        (u.email && u.email.toLowerCase().includes(query))
+    );
   },
 
   /**

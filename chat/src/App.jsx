@@ -248,6 +248,31 @@ export default function App() {
         JSON.stringify({ isAuthenticated: true, user: userDetails })
       );
 
+      // Register this user into local directory & registered users cache for discovery
+      try {
+        const dir = JSON.parse(localStorage.getItem('bloom_user_directory') || '{}');
+        dir[cleanUsername] = cleanEmail;
+        localStorage.setItem('bloom_user_directory', JSON.stringify(dir));
+
+        const allReg = JSON.parse(localStorage.getItem('bloom_registered_users') || '[]');
+        const exists = allReg.some((u) => (u.username || u.name)?.toLowerCase() === cleanUsername);
+        if (!exists) {
+          allReg.push({
+            id: userDetails.id,
+            name: userDetails.name,
+            username: userDetails.username,
+            userId: userDetails.userId,
+            email: userDetails.email,
+            avatar_url: userDetails.avatar,
+            status_emoji: userDetails.status_emoji,
+            status_text: userDetails.status_text,
+            about: userDetails.about,
+            status: 'online',
+          });
+          localStorage.setItem('bloom_registered_users', JSON.stringify(allReg));
+        }
+      } catch (e) {}
+
       // Load conversations exclusively for this user
       await loadUserConversations(authUser.id);
     } catch (e) {
@@ -758,10 +783,14 @@ export default function App() {
   const handleStartNewChat = async (contactData) => {
     if (!contactData) return;
 
-    const targetEmail = (contactData.email || '').toLowerCase().trim();
-    const targetUserId = contactData.id;
+    const rawHandle = (contactData.username || contactData.userId || contactData.name || '').toLowerCase().trim().replace(/^@/, '');
+    const targetEmail = (
+      contactData.email ||
+      (rawHandle ? `${rawHandle}@bloom.chat` : '')
+    ).toLowerCase().trim();
+    const targetUserId = contactData.id || (targetEmail ? getEmailUuid(targetEmail) : null);
 
-    if (!targetEmail && !targetUserId) return;
+    if (!targetEmail && !targetUserId && !rawHandle) return;
 
     // 1. Check if conversation already exists with this user (prevent duplicate contacts!)
     const existing = conversations.find((c) => {
@@ -769,6 +798,13 @@ export default function App() {
         return true;
       }
       if (targetEmail && c.user?.email && c.user.email.toLowerCase().trim() === targetEmail) {
+        return true;
+      }
+      if (rawHandle && (
+        c.user?.userId?.toLowerCase().trim().replace(/^@/, '') === rawHandle ||
+        c.user?.username?.toLowerCase().trim().replace(/^@/, '') === rawHandle ||
+        c.user?.name?.toLowerCase().trim().replace(/^@/, '') === rawHandle
+      )) {
         return true;
       }
       return false;

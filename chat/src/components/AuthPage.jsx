@@ -197,6 +197,32 @@ export default function AuthPage({ onLoginSuccess }) {
         const userObj = data?.user || {};
         const meta = userObj.user_metadata || {};
         const resolvedUserId = meta.userId || rawInput.replace(/@.*$/, '') || cleanEmail.split('@')[0];
+
+        // Register into local directory & registered users cache
+        try {
+          const dir = JSON.parse(localStorage.getItem('bloom_user_directory') || '{}');
+          dir[resolvedUserId] = cleanEmail;
+          localStorage.setItem('bloom_user_directory', JSON.stringify(dir));
+
+          const allReg = JSON.parse(localStorage.getItem('bloom_registered_users') || '[]');
+          const exists = allReg.some((u) => (u.username || u.name)?.toLowerCase() === resolvedUserId);
+          if (!exists) {
+            allReg.push({
+              id: userObj.id || getEmailUuid(cleanEmail),
+              name: meta.name || resolvedUserId,
+              username: resolvedUserId,
+              userId: resolvedUserId,
+              email: cleanEmail,
+              avatar_url: meta.avatar_url || meta.avatar || '',
+              status_emoji: meta.status_emoji || '🌸',
+              status_text: meta.status_text || 'Available',
+              about: meta.about || 'Available 🌸',
+              status: 'online',
+            });
+            localStorage.setItem('bloom_registered_users', JSON.stringify(allReg));
+          }
+        } catch (e) {}
+
         onLoginSuccess({
           ...userObj,
           id: userObj.id || getEmailUuid(cleanEmail),
@@ -305,11 +331,29 @@ export default function AuthPage({ onLoginSuccess }) {
         return;
       }
 
-      // Register into local directory
+      // Register into local directory & registered users cache
       try {
         const dir = JSON.parse(localStorage.getItem('bloom_user_directory') || '{}');
         dir[cleanUsername] = cleanEmail;
         localStorage.setItem('bloom_user_directory', JSON.stringify(dir));
+
+        const allReg = JSON.parse(localStorage.getItem('bloom_registered_users') || '[]');
+        const exists = allReg.some((u) => (u.username || u.name)?.toLowerCase() === cleanUsername);
+        if (!exists) {
+          allReg.push({
+            id: activeUser?.id || getEmailUuid(cleanEmail),
+            name: cleanUsername,
+            username: cleanUsername,
+            userId: cleanUsername,
+            email: cleanEmail,
+            avatar_url: '',
+            status_emoji: '🌸',
+            status_text: 'Available',
+            about: 'Available 🌸',
+            status: 'online',
+          });
+          localStorage.setItem('bloom_registered_users', JSON.stringify(allReg));
+        }
       } catch (e) {}
 
       // Try automatic immediate sign in
