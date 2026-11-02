@@ -229,6 +229,54 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
 
+-- Atomic RPC function to create or get an existing 1-on-1 direct conversation
+CREATE OR REPLACE FUNCTION public.get_or_create_direct_conversation(user1_id UUID, user2_id UUID)
+RETURNS UUID AS $$
+DECLARE
+  existing_conv_id UUID;
+  new_conv_id UUID;
+BEGIN
+  IF user1_id IS NULL OR user2_id IS NULL THEN
+    RAISE EXCEPTION 'Both user IDs must be provided';
+  END IF;
+
+  -- 1. Look for existing 1-on-1 direct conversation sharing both participants
+  SELECT cp1.conversation_id INTO existing_conv_id
+  FROM public.conversation_participants cp1
+  JOIN public.conversation_participants cp2 
+    ON cp1.conversation_id = cp2.conversation_id
+  JOIN public.conversations c 
+    ON c.id = cp1.conversation_id
+  WHERE cp1.user_id = user1_id 
+    AND cp2.user_id = user2_id
+    AND (c.type = 'direct' OR c.type IS NULL)
+  LIMIT 1;
+
+  IF existing_conv_id IS NOT NULL THEN
+    -- Unhide conversation if it was previously hidden
+    UPDATE public.conversation_participants
+    SET is_hidden = FALSE
+    WHERE conversation_id = existing_conv_id
+      AND user_id IN (user1_id, user2_id);
+    RETURN existing_conv_id;
+  END IF;
+
+  -- 2. Create new conversation row
+  INSERT INTO public.conversations (type, created_at, updated_at)
+  VALUES ('direct', NOW(), NOW())
+  RETURNING id INTO new_conv_id;
+
+  -- 3. Add both users to conversation_participants table
+  INSERT INTO public.conversation_participants (conversation_id, user_id, pinned, muted, is_hidden, unread_count)
+  VALUES 
+    (new_conv_id, user1_id, FALSE, FALSE, FALSE, 0),
+    (new_conv_id, user2_id, FALSE, FALSE, FALSE, 0)
+  ON CONFLICT (conversation_id, user_id) DO NOTHING;
+
+  RETURN new_conv_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.conversation_participants ENABLE ROW LEVEL SECURITY;

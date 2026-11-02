@@ -2,7 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { X, Search, Mail, UserPlus, Check, Sparkles, MessageSquare } from 'lucide-react';
 import { chatService } from '../services/chatService.js';
 
-export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUser }) {
+export default function NewChatModal({
+  isOpen,
+  onClose,
+  onSelectUser,
+  onOpenUserProfile,
+  currentUser,
+}) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -158,7 +164,14 @@ export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUse
               {searchResults.map((user) => (
                 <div
                   key={user.id}
-                  onClick={() => handleSelect(user)}
+                  onClick={() => {
+                    if (onOpenUserProfile) {
+                      onOpenUserProfile(user);
+                      onClose();
+                    } else {
+                      handleSelect(user);
+                    }
+                  }}
                   className="p-3 rounded-2xl border border-stone-100 hover:border-violet-200 bg-stone-50/50 hover:bg-violet-50/50 transition-all cursor-pointer flex items-center justify-between group"
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -186,10 +199,14 @@ export default function NewChatModal({ isOpen, onClose, onSelectUser, currentUse
 
                   <button
                     type="button"
-                    className="px-3 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 flex-shrink-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSelect(user);
+                    }}
+                    className="px-3.5 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 flex-shrink-0 cursor-pointer active:scale-95"
                   >
                     <MessageSquare className="w-3.5 h-3.5" />
-                    <span>Chat</span>
+                    <span>Message</span>
                   </button>
                 </div>
               ))}

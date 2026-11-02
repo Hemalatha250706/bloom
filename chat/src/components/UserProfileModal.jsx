@@ -10,6 +10,7 @@ import {
   Info,
   Trash2,
   AtSign,
+  MessageSquare,
 } from 'lucide-react';
 import { ABOUT_PRESETS } from '../data/mockData';
 
@@ -23,6 +24,7 @@ export default function UserProfileModal({
   isCurrentUser = false,
   onUpdateCurrentUser,
   onLogout,
+  onStartChat,
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState({
@@ -485,9 +487,25 @@ export default function UserProfileModal({
         {/* Modal Footer */}
         {!isEditing && (
           <div className="mt-4 pt-2 space-y-2">
+            {!isCurrentUser && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (onStartChat) {
+                    onStartChat(user);
+                  }
+                  onClose();
+                }}
+                className="w-full py-2.5 rounded-full bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-xs transition-all shadow-md shadow-violet-500/25 flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+              >
+                <MessageSquare className="w-4 h-4" />
+                <span>Message @{displayUserId}</span>
+              </button>
+            )}
+
             <button
               onClick={onClose}
-              className="w-full py-2.5 rounded-full bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 text-white font-bold text-xs transition-all shadow-md shadow-violet-400/30 cursor-pointer"
+              className="w-full py-2.5 rounded-full bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs transition-all cursor-pointer"
             >
               Close Profile
             </button>

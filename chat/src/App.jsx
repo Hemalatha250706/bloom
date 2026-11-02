@@ -1158,6 +1158,8 @@ export default function App() {
                 onDeleteConversation={handleDeleteConversation}
                 currentUser={currentUser}
                 onOpenNewChat={() => setIsNewChatOpen(true)}
+                onStartNewChat={handleStartNewChat}
+                onOpenUserProfile={(u) => setProfileModalUser(u)}
               />
             ) : (
               <StatusSidebar
@@ -1250,10 +1252,11 @@ export default function App() {
       <UserProfileModal
         isOpen={Boolean(profileModalUser)}
         user={profileModalUser}
-        isCurrentUser={profileModalUser?.id === currentUser.id}
+        isCurrentUser={profileModalUser?.id === currentUser?.id}
         onUpdateCurrentUser={handleUpdateCurrentUser}
         onClose={() => setProfileModalUser(null)}
         onLogout={handleLogout}
+        onStartChat={handleStartNewChat}
       />
 
       {/* Call Modal */}
@@ -1292,6 +1295,7 @@ export default function App() {
         isOpen={isNewChatOpen}
         onClose={() => setIsNewChatOpen(false)}
         onSelectUser={handleStartNewChat}
+        onOpenUserProfile={(u) => setProfileModalUser(u)}
         currentUser={currentUser}
       />
     </div>

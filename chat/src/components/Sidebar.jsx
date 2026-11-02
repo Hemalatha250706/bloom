@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Search,
   X,
@@ -7,8 +7,11 @@ import {
   UserPlus,
   Trash2,
   BellOff,
+  MessageSquare,
+  Users,
 } from 'lucide-react';
 import bloomLogo from '../bloom logo.png';
+import { chatService } from '../services/chatService.js';
 
 export default function Sidebar({
   conversations,
@@ -18,9 +21,43 @@ export default function Sidebar({
   onDeleteConversation,
   currentUser,
   onOpenNewChat,
+  onStartNewChat,
+  onOpenUserProfile,
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('All'); // 'All' | 'Unread' | 'Favorites'
+  const [matchingUsers, setMatchingUsers] = useState([]);
+  const [isSearchingUsers, setIsSearchingUsers] = useState(false);
+
+  // Debounced search for registered Bloom users by username (Instagram-style)
+  useEffect(() => {
+    const q = searchQuery.trim().replace(/^@/, '');
+    if (!q) {
+      setMatchingUsers([]);
+      setIsSearchingUsers(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setIsSearchingUsers(true);
+      try {
+        const users = await chatService.searchUsers(q, currentUser?.id);
+        const myHandle = (currentUser?.username || currentUser?.userId || '').toLowerCase().trim().replace(/^@/, '');
+        const filtered = (users || []).filter(
+          (u) =>
+            u.id !== currentUser?.id &&
+            u.username?.toLowerCase().trim() !== myHandle
+        );
+        setMatchingUsers(filtered);
+      } catch (err) {
+        setMatchingUsers([]);
+      } finally {
+        setIsSearchingUsers(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, currentUser?.id, currentUser?.username, currentUser?.userId]);
 
   // Filter conversations based on search and active filter, with deduplication guarantee
   const filteredConversations = useMemo(() => {
@@ -152,27 +189,101 @@ export default function Sidebar({
         </div>
       </div>
 
-      {/* 4. Clean Conversation List (No Status/Camera Clutter inside) */}
+      {/* 4. Conversation List & Instagram-Style User Search Results */}
       <div className="flex-1 overflow-y-auto px-2 py-1 space-y-1">
-        {filteredConversations.length === 0 ? (
+        {/* Instagram-style live registered user results when searching */}
+        {searchQuery.trim() && (
+          <div className="mb-3 px-1">
+            <div className="flex items-center justify-between py-1.5 px-2 border-b border-stone-100">
+              <span className="text-[11px] font-bold text-violet-700 uppercase tracking-wider flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5" />
+                <span>Users ({matchingUsers.length})</span>
+              </span>
+              {isSearchingUsers && (
+                <span className="w-3.5 h-3.5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+              )}
+            </div>
+
+            {matchingUsers.length > 0 ? (
+              <div className="space-y-1 mt-1.5">
+                {matchingUsers.map((user) => (
+                  <div
+                    key={user.id}
+                    onClick={() => {
+                      if (onOpenUserProfile) {
+                        onOpenUserProfile(user);
+                      }
+                    }}
+                    className="p-2.5 rounded-2xl bg-stone-50/70 hover:bg-violet-50/60 border border-stone-100 hover:border-violet-200 transition-all flex items-center justify-between gap-2.5 cursor-pointer group"
+                    title={`Click to view @${user.username}'s profile`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {user.avatar_url ? (
+                        <img
+                          src={user.avatar_url}
+                          alt={user.name}
+                          className="w-10 h-10 rounded-full object-cover ring-2 ring-violet-200 group-hover:ring-violet-400 transition-all shadow-xs flex-shrink-0"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-violet-500 to-indigo-600 text-white font-bold text-xs flex items-center justify-center ring-2 ring-violet-200 group-hover:ring-violet-400 transition-all shadow-xs flex-shrink-0">
+                          {(user.username || user.name || 'U').slice(0, 2).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-stone-900 group-hover:text-violet-950 truncate">
+                          @{user.username}
+                        </p>
+                        <p className="text-[11px] text-stone-500 truncate mt-0.5">
+                          {user.status_text || user.about || 'Available 🌸'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onStartNewChat) {
+                          onStartNewChat(user);
+                        }
+                        setSearchQuery('');
+                      }}
+                      className="px-3 py-1 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs shadow-xs transition-all flex items-center gap-1 cursor-pointer active:scale-95 flex-shrink-0"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      <span>Message</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              !isSearchingUsers && (
+                <p className="text-xs text-stone-400 italic py-2 px-2">
+                  No registered users found matching "@{searchQuery.trim().replace(/^@/, '')}"
+                </p>
+              )
+            )}
+
+            {sortedConversations.length > 0 && (
+              <div className="pt-3 pb-1 px-2 border-b border-stone-100">
+                <span className="text-[11px] font-bold text-stone-400 uppercase tracking-wider">
+                  Conversations
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {filteredConversations.length === 0 && !searchQuery.trim() ? (
           <div className="p-8 text-center text-stone-400">
             <p className="text-xs font-medium">No conversations found</p>
-            {searchQuery ? (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="mt-2 text-xs text-violet-600 font-semibold underline hover:text-violet-700"
-              >
-                Clear search
-              </button>
-            ) : (
-              <button
-                onClick={onOpenNewChat}
-                className="mt-3 px-4 py-1.5 rounded-xl bg-violet-600 text-white text-xs font-bold hover:bg-violet-700 transition-all inline-flex items-center gap-1.5 shadow-sm"
-              >
-                <UserPlus className="w-3.5 h-3.5" />
-                Start Chat
-              </button>
-            )}
+            <button
+              onClick={onOpenNewChat}
+              className="mt-3 px-4 py-1.5 rounded-xl bg-violet-600 text-white text-xs font-bold hover:bg-violet-700 transition-all inline-flex items-center gap-1.5 shadow-sm"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              Start Chat
+            </button>
           </div>
         ) : (
           sortedConversations.map((conv) => {

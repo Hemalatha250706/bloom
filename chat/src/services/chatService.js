@@ -352,6 +352,20 @@ export const chatService = {
     }
 
     try {
+      // 1. Try atomic PostgreSQL RPC first (prevents race-condition duplicate conversations)
+      const { data: rpcConvId, error: rpcErr } = await supabase.rpc(
+        'get_or_create_direct_conversation',
+        { user1_id: currentUserId, user2_id: otherUserId }
+      );
+
+      if (!rpcErr && rpcConvId) {
+        return rpcConvId;
+      }
+    } catch (e) {
+      // Fall through to client-side query
+    }
+
+    try {
       // Step A: Find all conversations current user participates in
       const { data: myParticipants, error: myPartErr } = await supabase
         .from('conversation_participants')
