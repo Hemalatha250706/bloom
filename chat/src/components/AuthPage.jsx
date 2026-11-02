@@ -467,21 +467,16 @@ export default function AuthPage({ onLoginSuccess }) {
 
       {/* Main Auth Card */}
       <div className="relative w-full max-w-md bg-white/95 backdrop-blur-md rounded-3xl border border-violet-100 shadow-2xl p-6 sm:p-8 animate-in fade-in zoom-in-95 duration-200">
-        {/* Brand Logo & Header */}
+        {/* Brand Logo Header */}
         <div className="flex flex-col items-center text-center mb-6">
-          <div className="w-16 h-16 rounded-2xl bg-white border border-violet-100 flex items-center justify-center p-2 shadow-lg shadow-violet-500/15 mb-3 select-none">
+          <div className="flex items-center justify-center mb-1 select-none">
             <img
               src={bloomLogo}
-              alt="Bloom Logo"
-              className="w-full h-full object-contain drop-shadow-xs"
+              alt="Bloom"
+              className="h-20 w-auto max-w-[220px] object-contain drop-shadow-sm rounded-xl"
             />
           </div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-extrabold text-stone-900 tracking-tight">
-              Bloom
-            </h1>
-          </div>
-          <p className="text-xs text-stone-500 font-medium mt-1">
+          <p className="text-xs text-stone-500 font-medium">
             Serene & Mindful Messaging
           </p>
         </div>
@@ -645,7 +640,7 @@ export default function AuthPage({ onLoginSuccess }) {
                   <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 ) : (
                   <>
-                    <span>Sign In to Bloom</span>
+                    <span>Sign In</span>
                     <Sparkles className="w-4 h-4" />
                   </>
                 )}
