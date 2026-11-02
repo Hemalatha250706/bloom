@@ -8,6 +8,7 @@ import {
   Trash2,
   BellOff,
 } from 'lucide-react';
+import bloomLogo from '../bloom logo.png';
 
 export default function Sidebar({
   conversations,
@@ -88,9 +89,16 @@ export default function Sidebar({
     <aside className="w-full h-full flex flex-col min-h-0 bg-white/95">
       {/* 1. App Header */}
       <div className="p-4 pb-3 flex items-center justify-between border-b border-violet-100/70">
-        <h1 className="font-black text-2xl tracking-tight bg-gradient-to-r from-violet-700 via-purple-600 to-indigo-600 bg-clip-text text-transparent drop-shadow-xs select-none">
-          Bloom
-        </h1>
+        <div className="flex items-center gap-2.5">
+          <img
+            src={bloomLogo}
+            alt="Bloom"
+            className="w-8 h-8 rounded-xl object-contain drop-shadow-xs select-none"
+          />
+          <h1 className="font-black text-2xl tracking-tight bg-gradient-to-r from-violet-700 via-purple-600 to-indigo-600 bg-clip-text text-transparent drop-shadow-xs select-none">
+            Bloom
+          </h1>
+        </div>
         <button
           type="button"
           onClick={onOpenNewChat}

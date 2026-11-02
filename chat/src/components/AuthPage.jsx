@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { authService } from '../services/authService.js';
 import { getEmailUuid } from '../services/chatService.js';
+import bloomLogo from '../bloom logo.png';
 
 export default function AuthPage({ onLoginSuccess }) {
   // Restore auth view & email if user refreshes while waiting for OTP / resetting
@@ -468,8 +469,12 @@ export default function AuthPage({ onLoginSuccess }) {
       <div className="relative w-full max-w-md bg-white/95 backdrop-blur-md rounded-3xl border border-violet-100 shadow-2xl p-6 sm:p-8 animate-in fade-in zoom-in-95 duration-200">
         {/* Brand Logo & Header */}
         <div className="flex flex-col items-center text-center mb-6">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-violet-500 via-purple-500 to-indigo-500 flex items-center justify-center text-white shadow-lg shadow-violet-500/30 mb-3">
-            <span className="text-2xl">🌸</span>
+          <div className="w-16 h-16 rounded-2xl bg-white border border-violet-100 flex items-center justify-center p-2 shadow-lg shadow-violet-500/15 mb-3 select-none">
+            <img
+              src={bloomLogo}
+              alt="Bloom Logo"
+              className="w-full h-full object-contain drop-shadow-xs"
+            />
           </div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-extrabold text-stone-900 tracking-tight">
