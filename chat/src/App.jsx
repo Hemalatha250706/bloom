@@ -262,11 +262,6 @@ export default function App() {
       .then((session) => {
         if (session?.user) {
           syncUserProfileAndConversations(session.user);
-        } else {
-          const saved = localStorage.getItem('bloom_auth_session');
-          if (saved) {
-            handleLogout();
-          }
         }
       })
       .catch(() => {});
@@ -275,8 +270,6 @@ export default function App() {
     const { data: authSub } = authService.onAuthStateChange((event, session) => {
       if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
         syncUserProfileAndConversations(session.user);
-      } else if (event === 'SIGNED_OUT') {
-        handleLogout();
       }
     });
 

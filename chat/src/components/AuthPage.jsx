@@ -24,6 +24,19 @@ export default function AuthPage({ onLoginSuccess }) {
   // Restore auth view & email if user refreshes while waiting for OTP / resetting
   const [view, setView] = useState(() => {
     try {
+      if (typeof window !== 'undefined') {
+        const hash = window.location.hash || '';
+        const search = window.location.search || '';
+        if (
+          hash.includes('signup') ||
+          hash.includes('register') ||
+          hash.includes('create-account') ||
+          search.includes('tab=signup') ||
+          search.includes('signup')
+        ) {
+          return 'signup';
+        }
+      }
       const saved = sessionStorage.getItem('bloom_auth_view');
       if (saved && ['forgot_password', 'verify_otp', 'new_password'].includes(saved)) {
         return saved;
@@ -96,18 +109,15 @@ export default function AuthPage({ onLoginSuccess }) {
     setOtp('');
   }, []);
 
-  // Clear fields when toggling between tabs
+  // Switch tabs cleanly
   const handleSwitchTab = (newTab) => {
     setErrorMessage('');
     setSuccessMessage('');
-    setEmail('');
-    setPassword('');
-    setSignupUsername('');
-    setSignupEmail('');
-    setSignupPhone('');
-    setSignupPassword('');
-    setSignupConfirmPassword('');
     setView(newTab);
+    try {
+      sessionStorage.removeItem('bloom_auth_view');
+      sessionStorage.removeItem('bloom_reset_email');
+    } catch (e) {}
   };
 
   // Check if opened with recovery hash directly from email link
@@ -239,7 +249,8 @@ export default function AuthPage({ onLoginSuccess }) {
       setErrorMessage('Username must be at least 3 characters long.');
       return;
     }
-    if (!signupEmail.trim() || !signupEmail.includes('@')) {
+    const cleanEmail = signupEmail.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
       setErrorMessage('Please enter a valid email address.');
       return;
     }
@@ -254,7 +265,7 @@ export default function AuthPage({ onLoginSuccess }) {
 
     setIsLoading(true);
 
-    // Enforce unique username check (case-insensitive)
+    // 1. Enforce unique username check (case-insensitive)
     try {
       const availability = await authService.checkUsernameAvailability(cleanUsername);
       if (!availability.available) {
@@ -263,11 +274,20 @@ export default function AuthPage({ onLoginSuccess }) {
         return;
       }
     } catch (e) {
-      console.warn('Username check error:', e);
+      console.warn('Username check notice:', e);
     }
 
-    const cleanEmail = signupEmail.trim().toLowerCase();
+    // 2. Also check local directory to prevent duplicate local usernames
+    try {
+      const dir = JSON.parse(localStorage.getItem('bloom_user_directory') || '{}');
+      if (dir[cleanUsername] && dir[cleanUsername] !== cleanEmail) {
+        setIsLoading(false);
+        setErrorMessage(`Username "@${cleanUsername}" is already in use. Please choose another username.`);
+        return;
+      }
+    } catch (e) {}
 
+    // 3. Register with Supabase Auth
     try {
       const data = await authService.signUp(cleanEmail, signupPassword, {
         name: cleanUsername,
@@ -275,7 +295,15 @@ export default function AuthPage({ onLoginSuccess }) {
         userId: cleanUsername,
         display_name: cleanUsername,
       });
-      setIsLoading(false);
+
+      // In Supabase, if email is already registered and email confirmation is on,
+      // data.user exists but identities array is empty []!
+      if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+        setIsLoading(false);
+        setErrorMessage('This email is already registered. Please sign in instead.');
+        setEmail(cleanEmail);
+        return;
+      }
 
       // Register into local directory
       try {
@@ -284,31 +312,44 @@ export default function AuthPage({ onLoginSuccess }) {
         localStorage.setItem('bloom_user_directory', JSON.stringify(dir));
       } catch (e) {}
 
-      const loggedInUser = data?.user || {
-        id: getEmailUuid(cleanEmail),
+      // Try automatic immediate sign in
+      let activeUser = data?.user;
+      try {
+        const loginData = await authService.signIn(cleanEmail, signupPassword);
+        if (loginData?.user) {
+          activeUser = loginData.user;
+        }
+      } catch (signInErr) {
+        console.log('Immediate sign in check:', signInErr?.message || signInErr);
+      }
+
+      setIsLoading(false);
+
+      const resolvedUser = {
+        id: activeUser?.id || getEmailUuid(cleanEmail),
         email: cleanEmail,
         userId: cleanUsername,
+        username: cleanUsername,
         name: cleanUsername,
-        user_metadata: { name: cleanUsername, username: cleanUsername, userId: cleanUsername },
-      };
-      if (onLoginSuccess) {
-        onLoginSuccess({
-          ...loggedInUser,
-          userId: cleanUsername,
+        user_metadata: {
+          ...(activeUser?.user_metadata || {}),
           name: cleanUsername,
-          user_metadata: {
-            ...(loggedInUser.user_metadata || {}),
-            name: cleanUsername,
-            username: cleanUsername,
-            userId: cleanUsername,
-          },
-        });
+          username: cleanUsername,
+          userId: cleanUsername,
+        },
+      };
+
+      if (onLoginSuccess) {
+        onLoginSuccess(resolvedUser);
       }
     } catch (err) {
       setIsLoading(false);
       console.error('Sign up error:', err);
       const msg = err.message || '';
-      if (msg.toLowerCase().includes('already registered')) {
+      if (
+        msg.toLowerCase().includes('already registered') ||
+        msg.toLowerCase().includes('user already exists')
+      ) {
         setErrorMessage('This email is already registered. Please sign in instead.');
         return;
       }
@@ -316,7 +357,7 @@ export default function AuthPage({ onLoginSuccess }) {
         setErrorMessage(`Username "@${cleanUsername}" is already taken. Please choose another.`);
         return;
       }
-      setErrorMessage(msg || 'Failed to create account.');
+      setErrorMessage(msg || 'Failed to create account. Please try again.');
     }
   };
 
@@ -493,32 +534,32 @@ export default function AuthPage({ onLoginSuccess }) {
         </div>
 
         {/* Toggle Tabs: Sign In / Create Account */}
-        {(view === 'login' || view === 'signup') && (
-          <div className="flex bg-stone-100 p-1 rounded-2xl mb-5 border border-stone-200">
-            <button
-              type="button"
-              onClick={() => handleSwitchTab('login')}
-              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
-                view === 'login'
-                  ? 'bg-white text-stone-900 shadow-sm'
-                  : 'text-stone-500 hover:text-stone-800'
-              }`}
-            >
-              Sign In
-            </button>
-            <button
-              type="button"
-              onClick={() => handleSwitchTab('signup')}
-              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
-                view === 'signup'
-                  ? 'bg-white text-violet-700 shadow-sm'
-                  : 'text-stone-500 hover:text-stone-800'
-              }`}
-            >
-              Create Account
-            </button>
-          </div>
-        )}
+        <div className="flex bg-stone-100 p-1 rounded-2xl mb-5 border border-stone-200">
+          <button
+            type="button"
+            id="auth-tab-signin"
+            onClick={() => handleSwitchTab('login')}
+            className={`flex-1 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+              view === 'login'
+                ? 'bg-white text-stone-900 shadow-sm'
+                : 'text-stone-500 hover:text-stone-800'
+            }`}
+          >
+            Sign In
+          </button>
+          <button
+            type="button"
+            id="auth-tab-signup"
+            onClick={() => handleSwitchTab('signup')}
+            className={`flex-1 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+              view === 'signup'
+                ? 'bg-white text-violet-700 shadow-sm'
+                : 'text-stone-500 hover:text-stone-800'
+            }`}
+          >
+            Create Account
+          </button>
+        </div>
 
         {/* ---------------- VIEW 1: LOGIN (SIGN IN) ---------------- */}
         {view === 'login' && (
@@ -685,8 +726,9 @@ export default function AuthPage({ onLoginSuccess }) {
                   Don't have an account yet?{' '}
                   <button
                     type="button"
+                    id="btn-switch-to-signup"
                     onClick={() => handleSwitchTab('signup')}
-                    className="font-bold text-violet-600 hover:text-violet-800 transition-colors cursor-pointer"
+                    className="font-bold text-violet-600 hover:text-violet-800 transition-colors cursor-pointer underline underline-offset-2"
                   >
                     Create Account
                   </button>
@@ -821,8 +863,9 @@ export default function AuthPage({ onLoginSuccess }) {
               {/* Sign Up Button */}
               <button
                 type="submit"
+                id="btn-create-my-account"
                 disabled={isLoading}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 text-white font-bold text-sm shadow-md shadow-violet-500/25 transition-all duration-150 hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2 mt-2 cursor-pointer"
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 text-white font-bold text-sm shadow-md shadow-violet-500/25 transition-all duration-150 hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2 mt-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {isLoading ? (
                   <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -840,8 +883,9 @@ export default function AuthPage({ onLoginSuccess }) {
                   Already have an account?{' '}
                   <button
                     type="button"
+                    id="btn-switch-to-signin"
                     onClick={() => handleSwitchTab('login')}
-                    className="font-bold text-violet-600 hover:text-violet-800 transition-colors cursor-pointer"
+                    className="font-bold text-violet-600 hover:text-violet-800 transition-colors cursor-pointer underline underline-offset-2"
                   >
                     Sign In
                   </button>
