@@ -320,21 +320,32 @@ export default function AuthPage({ onLoginSuccess }) {
     }
   };
 
-  // Quick Demo Login for testing 2 email users simultaneously
-  const handleQuickDemo = (demoEmail = 'alex@bloom.chat', demoName = 'Alex') => {
+  // Quick Demo Login for testing 2 email users simultaneously with real Supabase Auth
+  const handleQuickDemo = async (demoEmail = 'alex@bloom.chat', demoName = 'Alex') => {
     setEmail(demoEmail);
     setPassword('bloom123');
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      if (onLoginSuccess) {
-        onLoginSuccess({
-          id: getEmailUuid(demoEmail),
-          email: demoEmail,
-          user_metadata: { name: demoName },
+    setErrorMessage('');
+    try {
+      let data;
+      try {
+        data = await authService.signIn(demoEmail, 'bloom123');
+      } catch (signInErr) {
+        // If demo account not registered yet in Supabase, create it
+        data = await authService.signUp(demoEmail, 'bloom123', {
+          name: demoName,
+          username: demoName.toLowerCase(),
+          userId: demoName.toLowerCase(),
         });
       }
-    }, 300);
+      setIsLoading(false);
+      if (data?.user && onLoginSuccess) {
+        onLoginSuccess(data.user);
+      }
+    } catch (err) {
+      setIsLoading(false);
+      setErrorMessage(err.message || 'Demo account sign in error.');
+    }
   };
 
   // Step 1: Send Password Recovery OTP to Email

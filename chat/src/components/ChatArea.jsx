@@ -85,14 +85,26 @@ export default function ChatArea({
             {/* List of Messages */}
             {msgs.map((msg) => {
               const myEmail = (currentUser?.email || '').toLowerCase().trim();
-              const myUserId = (currentUser?.userId || currentUser?.user_metadata?.userId || '').toLowerCase().trim().replace(/^@/, '');
+              const myUserId = (
+                currentUser?.userId ||
+                currentUser?.username ||
+                currentUser?.user_metadata?.username ||
+                currentUser?.user_metadata?.userId ||
+                ''
+              ).toLowerCase().trim().replace(/^@/, '');
+              const myName = (currentUser?.name || '').toLowerCase().trim();
+
+              const msgSenderId = String(msg.senderId || '').toLowerCase().trim();
+              const currentUserId = String(currentUser?.id || '').toLowerCase().trim();
               const msgSenderEmail = (msg.senderEmail || '').toLowerCase().trim();
               const msgSenderUserId = (msg.senderUserId || '').toLowerCase().trim().replace(/^@/, '');
+              const msgSenderName = (msg.senderName || '').toLowerCase().trim();
 
               const isSender =
-                msg.senderId === currentUser?.id ||
+                (msgSenderId && currentUserId && msgSenderId === currentUserId) ||
                 (msgSenderEmail && myEmail && msgSenderEmail === myEmail) ||
-                (msgSenderUserId && myUserId && msgSenderUserId === myUserId);
+                (msgSenderUserId && myUserId && msgSenderUserId === myUserId) ||
+                (msgSenderName && myName && msgSenderName === myName && msg.id.startsWith('msg-'));
 
               return (
                 <div key={msg.id} id={`msg-${msg.id}`}>

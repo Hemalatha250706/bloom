@@ -215,8 +215,20 @@ CREATE TRIGGER on_auth_user_created
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
 
 -- ==============================================================================
--- 7. ROW LEVEL SECURITY (RLS) POLICIES
 -- ==============================================================================
+-- 7. ROW LEVEL SECURITY (RLS) POLICIES & PARTICIPANT HELPER FUNCTION
+-- ==============================================================================
+-- Helper function to check participation without triggering infinite RLS recursion
+CREATE OR REPLACE FUNCTION public.is_conversation_participant(conv_id UUID, check_user_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.conversation_participants
+    WHERE conversation_id = conv_id AND user_id = check_user_id
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.conversation_participants ENABLE ROW LEVEL SECURITY;
@@ -224,76 +236,118 @@ ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.statuses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.status_views ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.status_likes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.message_reactions ENABLE ROW LEVEL SECURITY;
 
--- Clean existing policies to prevent duplicate policy errors
+-- ------------------------------------------------------------------------------
+-- Profiles Policies
+-- ------------------------------------------------------------------------------
 DROP POLICY IF EXISTS "Public profiles are viewable by all users" ON public.profiles;
 DROP POLICY IF EXISTS "Profiles viewable by everyone" ON public.profiles;
 DROP POLICY IF EXISTS "Users can insert their own profile" ON public.profiles;
 DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
 
+-- All users can discover registered profiles (for search and avatars)
 CREATE POLICY "Profiles viewable by everyone" 
   ON public.profiles FOR SELECT USING (true);
 
+-- Users can only insert their own profile row
 CREATE POLICY "Users can insert their own profile" 
-  ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id OR true);
+  ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
 
+-- Users can only update their own profile row
 CREATE POLICY "Users can update their own profile" 
-  ON public.profiles FOR UPDATE USING (auth.uid() = id OR true);
+  ON public.profiles FOR UPDATE USING (auth.uid() = id);
 
--- Conversations policies
+-- ------------------------------------------------------------------------------
+-- Conversations Policies
+-- ------------------------------------------------------------------------------
 DROP POLICY IF EXISTS "Conversations viewable by participants" ON public.conversations;
 DROP POLICY IF EXISTS "Conversations select" ON public.conversations;
 DROP POLICY IF EXISTS "Conversations insert" ON public.conversations;
 DROP POLICY IF EXISTS "Conversations update" ON public.conversations;
 
+-- Users can only see conversations they participate in
 CREATE POLICY "Conversations select" 
-  ON public.conversations FOR SELECT USING (true);
+  ON public.conversations FOR SELECT 
+  USING (public.is_conversation_participant(id, auth.uid()));
 
+-- Authenticated users can create new conversations
 CREATE POLICY "Conversations insert" 
-  ON public.conversations FOR INSERT WITH CHECK (true);
+  ON public.conversations FOR INSERT 
+  WITH CHECK (auth.uid() IS NOT NULL);
 
+-- Participants can update conversation details
 CREATE POLICY "Conversations update" 
-  ON public.conversations FOR UPDATE USING (true);
+  ON public.conversations FOR UPDATE 
+  USING (public.is_conversation_participant(id, auth.uid()));
 
--- Conversation Participants policies
+-- ------------------------------------------------------------------------------
+-- Conversation Participants Policies
+-- ------------------------------------------------------------------------------
 DROP POLICY IF EXISTS "Participants access" ON public.conversation_participants;
 DROP POLICY IF EXISTS "Participants select" ON public.conversation_participants;
 DROP POLICY IF EXISTS "Participants insert" ON public.conversation_participants;
 DROP POLICY IF EXISTS "Participants update" ON public.conversation_participants;
 DROP POLICY IF EXISTS "Participants delete" ON public.conversation_participants;
 
+-- Users can view participants of conversations they belong to
 CREATE POLICY "Participants select" 
-  ON public.conversation_participants FOR SELECT USING (true);
+  ON public.conversation_participants FOR SELECT 
+  USING (
+    user_id = auth.uid() OR 
+    public.is_conversation_participant(conversation_id, auth.uid())
+  );
 
+-- Authenticated users can add participants to conversations they are creating or participate in
 CREATE POLICY "Participants insert" 
-  ON public.conversation_participants FOR INSERT WITH CHECK (true);
+  ON public.conversation_participants FOR INSERT 
+  WITH CHECK (auth.uid() IS NOT NULL);
 
+-- Users can only update their own participant record (pin, mute, hide, unread)
 CREATE POLICY "Participants update" 
-  ON public.conversation_participants FOR UPDATE USING (true);
+  ON public.conversation_participants FOR UPDATE 
+  USING (user_id = auth.uid());
 
+-- Users can only delete their own participant record
 CREATE POLICY "Participants delete" 
-  ON public.conversation_participants FOR DELETE USING (true);
+  ON public.conversation_participants FOR DELETE 
+  USING (user_id = auth.uid());
 
--- Messages policies
+-- ------------------------------------------------------------------------------
+-- Messages Policies
+-- ------------------------------------------------------------------------------
 DROP POLICY IF EXISTS "Messages access" ON public.messages;
 DROP POLICY IF EXISTS "Messages select" ON public.messages;
 DROP POLICY IF EXISTS "Messages insert" ON public.messages;
 DROP POLICY IF EXISTS "Messages update" ON public.messages;
 DROP POLICY IF EXISTS "Messages delete" ON public.messages;
 
+-- Users can only read messages belonging to their conversations
 CREATE POLICY "Messages select" 
-  ON public.messages FOR SELECT USING (true);
+  ON public.messages FOR SELECT 
+  USING (public.is_conversation_participant(conversation_id, auth.uid()));
 
+-- Users can only insert messages as their authenticated user ID in conversations they belong to
 CREATE POLICY "Messages insert" 
-  ON public.messages FOR INSERT WITH CHECK (true);
+  ON public.messages FOR INSERT 
+  WITH CHECK (
+    sender_id = auth.uid() AND 
+    public.is_conversation_participant(conversation_id, auth.uid())
+  );
 
+-- Participants can update messages (e.g. read status, reactions) in their conversations
 CREATE POLICY "Messages update" 
-  ON public.messages FOR UPDATE USING (true);
+  ON public.messages FOR UPDATE 
+  USING (public.is_conversation_participant(conversation_id, auth.uid()));
 
+-- Users can only delete their own sent messages
 CREATE POLICY "Messages delete" 
-  ON public.messages FOR DELETE USING (true);
+  ON public.messages FOR DELETE 
+  USING (sender_id = auth.uid());
 
--- Status policies
+-- ------------------------------------------------------------------------------
+-- Status Policies
+-- ------------------------------------------------------------------------------
 DROP POLICY IF EXISTS "Statuses viewable by all users" ON public.statuses;
 DROP POLICY IF EXISTS "Users can create their own status" ON public.statuses;
 DROP POLICY IF EXISTS "Users can delete their own status" ON public.statuses;
@@ -302,10 +356,10 @@ CREATE POLICY "Statuses viewable by all users"
   ON public.statuses FOR SELECT USING (expires_at > NOW());
 
 CREATE POLICY "Users can create their own status" 
-  ON public.statuses FOR INSERT WITH CHECK (auth.uid() = user_id OR true);
+  ON public.statuses FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 CREATE POLICY "Users can delete their own status" 
-  ON public.statuses FOR DELETE USING (auth.uid() = user_id OR true);
+  ON public.statuses FOR DELETE USING (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Users can view seen list for their own status" ON public.status_views;
 DROP POLICY IF EXISTS "Users can insert their own view" ON public.status_views;
@@ -314,7 +368,7 @@ CREATE POLICY "Users can view seen list for their own status"
   ON public.status_views FOR SELECT USING (true);
 
 CREATE POLICY "Users can insert their own view" 
-  ON public.status_views FOR INSERT WITH CHECK (true);
+  ON public.status_views FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
 
 DROP POLICY IF EXISTS "Status likes viewable by all" ON public.status_likes;
 DROP POLICY IF EXISTS "Users can like or unlike status" ON public.status_likes;
@@ -323,19 +377,20 @@ CREATE POLICY "Status likes viewable by all"
   ON public.status_likes FOR SELECT USING (true);
 
 CREATE POLICY "Users can like or unlike status" 
-  ON public.status_likes FOR ALL USING (true);
+  ON public.status_likes FOR ALL USING (auth.uid() IS NOT NULL);
 
--- Message Reactions policies
-ALTER TABLE public.message_reactions ENABLE ROW LEVEL SECURITY;
+-- ------------------------------------------------------------------------------
+-- Message Reactions Policies
+-- ------------------------------------------------------------------------------
 DROP POLICY IF EXISTS "Reactions select" ON public.message_reactions;
 DROP POLICY IF EXISTS "Reactions insert" ON public.message_reactions;
 DROP POLICY IF EXISTS "Reactions update" ON public.message_reactions;
 DROP POLICY IF EXISTS "Reactions delete" ON public.message_reactions;
 
 CREATE POLICY "Reactions select" ON public.message_reactions FOR SELECT USING (true);
-CREATE POLICY "Reactions insert" ON public.message_reactions FOR INSERT WITH CHECK (true);
-CREATE POLICY "Reactions update" ON public.message_reactions FOR UPDATE USING (true);
-CREATE POLICY "Reactions delete" ON public.message_reactions FOR DELETE USING (true);
+CREATE POLICY "Reactions insert" ON public.message_reactions FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Reactions update" ON public.message_reactions FOR UPDATE USING (auth.uid() = user_id);
+CREATE POLICY "Reactions delete" ON public.message_reactions FOR DELETE USING (auth.uid() = user_id);
 
 -- ==============================================================================
 -- 8. ENABLE REALTIME PUBLICATION

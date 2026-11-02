@@ -282,7 +282,7 @@ export default function Sidebar({
                     >
                       {lastMsg ? (
                         <span>
-                          {lastMsg.senderId === currentUser.id && (
+                          {(lastMsg.senderId === currentUser?.id || (lastMsg.senderUserId && currentUser?.userId && lastMsg.senderUserId.toLowerCase() === currentUser.userId.toLowerCase())) && (
                             <span className="text-violet-700 font-semibold">You: </span>
                           )}
                           {lastMsg.text}

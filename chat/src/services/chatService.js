@@ -134,29 +134,69 @@ let activeConversationChannel = null;
 
 export const chatService = {
   // ==============================================================================
-  // 1. PROFILE MANAGEMENT (Upsert on login & Search by Email)
+  // 1. PROFILE MANAGEMENT (Upsert on login, Fetch Profile, & Search Users)
   // ==============================================================================
 
   /**
+   * Fetches profile by Supabase user ID from public.profiles
+   */
+  async getProfile(userId) {
+    if (!userId || userId === 'current_user') return null;
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn('getProfile DB notice:', error.message);
+        return null;
+      }
+      return data;
+    } catch (e) {
+      console.warn('getProfile exception:', e);
+      return null;
+    }
+  },
+
+  /**
    * Ensure user's profile is registered in public.profiles table
+   * Preserves existing username, custom avatar, and status.
    */
   async ensureProfile(user) {
-    if (!user || !user.id) return null;
+    if (!user || !user.id || user.id === 'current_user') return null;
     const meta = user.user_metadata || {};
     const email = (user.email || '').toLowerCase().trim();
-    const name = meta.name || email.split('@')[0] || 'Bloom User';
-    const avatarUrl = meta.avatar_url || meta.avatar || '';
-
-    const payload = {
-      id: user.id,
-      name,
-      email,
-      avatar_url: avatarUrl,
-      status: 'online',
-      updated_at: new Date().toISOString(),
-    };
+    const fallbackUsername = (
+      meta.username ||
+      meta.userId ||
+      meta.name ||
+      email.split('@')[0] ||
+      'user'
+    ).toLowerCase().trim().replace(/^@/, '');
 
     try {
+      // 1. Check if profile already exists in DB
+      const existing = await this.getProfile(user.id);
+      if (existing) {
+        return existing;
+      }
+
+      // 2. Insert new profile
+      const payload = {
+        id: user.id,
+        name: meta.name || fallbackUsername,
+        username: fallbackUsername,
+        email,
+        avatar_url: meta.avatar_url || meta.avatar || '',
+        status: 'online',
+        status_emoji: '🌸',
+        status_text: 'Available',
+        about: 'Available 🌸',
+        updated_at: new Date().toISOString(),
+      };
+
       const { data, error } = await supabase
         .from('profiles')
         .upsert(payload, { onConflict: 'id' })
@@ -165,11 +205,47 @@ export const chatService = {
 
       if (error) {
         console.warn('ensureProfile DB notice:', error.message);
+        return payload;
       }
       return data || payload;
     } catch (err) {
       console.warn('ensureProfile exception:', err);
-      return payload;
+      return null;
+    }
+  },
+
+  /**
+   * Updates user's profile fields in public.profiles table
+   */
+  async updateProfile(userId, updates) {
+    if (!userId || !updates || userId === 'current_user') return null;
+    try {
+      const payload = {
+        updated_at: new Date().toISOString(),
+      };
+      if (updates.name !== undefined) payload.name = updates.name;
+      if (updates.username !== undefined) {
+        payload.username = updates.username.toLowerCase().trim().replace(/^@/, '');
+      }
+      if (updates.avatar_url !== undefined) payload.avatar_url = updates.avatar_url;
+      if (updates.avatar !== undefined) payload.avatar_url = updates.avatar;
+      if (updates.about !== undefined) payload.about = updates.about;
+      if (updates.status_emoji !== undefined) payload.status_emoji = updates.status_emoji;
+      if (updates.status_text !== undefined) payload.status_text = updates.status_text;
+      if (updates.phone !== undefined) payload.phone = updates.phone;
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .update(payload)
+        .eq('id', userId)
+        .select()
+        .single();
+
+      if (error) console.warn('updateProfile notice:', error.message);
+      return data;
+    } catch (e) {
+      console.warn('updateProfile exception:', e);
+      return null;
     }
   },
 
@@ -589,6 +665,7 @@ export const chatService = {
   async sendMessage({
     conversationId,
     senderId,
+    recipientId = null,
     senderEmail,
     senderName,
     text,
@@ -607,6 +684,7 @@ export const chatService = {
       id: tempId,
       conversationId,
       senderId,
+      recipientId: recipientId || null,
       senderEmail: senderEmail || '',
       senderName: senderName || '',
       text: text || '',
@@ -824,10 +902,15 @@ export const chatService = {
 
         // Skip if message was broadcast by myself (prevents duplicate self-messages)
         const isSender =
-          payload.senderId?.toLowerCase() === userUuid.toLowerCase() ||
-          (payload.senderEmail && payload.senderEmail.toLowerCase() === cleanEmail);
+          (payload.senderId && payload.senderId.toLowerCase() === userUuid.toLowerCase()) ||
+          (payload.senderEmail && cleanEmail && payload.senderEmail.toLowerCase() === cleanEmail);
 
         if (isSender) return;
+
+        // Skip if message has a specific recipient and it is not this user (prevents cross-user message leakage)
+        if (payload.recipientId && payload.recipientId.toLowerCase() !== userUuid.toLowerCase()) {
+          return;
+        }
 
         if (typeof onMessageReceived === 'function') {
           onMessageReceived(payload, { isSender: false, isReceiver: true });

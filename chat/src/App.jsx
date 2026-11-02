@@ -22,7 +22,7 @@ import {
   isContactOnline,
 } from './services/chatService.js';
 import './testSupabase';
-import { CURRENT_USER } from './data/mockData';
+import './testSupabase';
 
 export default function App() {
   // Restore authenticated session from localStorage on refresh
@@ -31,7 +31,7 @@ export default function App() {
       const saved = localStorage.getItem('bloom_auth_session');
       if (saved) {
         const parsed = JSON.parse(saved);
-        return Boolean(parsed?.isAuthenticated);
+        return Boolean(parsed?.isAuthenticated && parsed?.user?.id);
       }
     } catch (e) {
       // ignore
@@ -54,44 +54,43 @@ export default function App() {
 
   const [activeNavTab, setActiveNavTab] = useState('chats'); // 'chats' | 'status'
 
-  // Current User Details
+  // Current User Details - strictly authenticated user data (Never hardcoded mock user)
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const saved = localStorage.getItem('bloom_auth_session');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed?.user) {
+        if (parsed?.isAuthenticated && parsed?.user && parsed.user.id) {
           const userMeta = parsed.user.user_metadata || {};
-          const cleanEmail = parsed.user.email || CURRENT_USER.email;
-          const userUid =
-            userMeta.userId ||
+          const cleanEmail = parsed.user.email || '';
+          const userUid = (
+            parsed.user.username ||
             parsed.user.userId ||
+            userMeta.username ||
+            userMeta.userId ||
             cleanEmail.split('@')[0] ||
-            CURRENT_USER.userId ||
-            'user';
+            'user'
+          ).toLowerCase().trim().replace(/^@/, '');
 
           return {
-            ...CURRENT_USER,
-            id: parsed.user.id || CURRENT_USER.id,
+            id: parsed.user.id,
             email: cleanEmail,
             userId: userUid,
-            phone:
-              userMeta.phone ||
-              parsed.user.phone ||
-              CURRENT_USER.phone ||
-              '',
-            name:
-              userMeta.name ||
-              cleanEmail.split('@')[0] ||
-              CURRENT_USER.name,
-            avatar: userMeta.avatar || CURRENT_USER.avatar || '',
+            username: userUid,
+            name: parsed.user.name || userMeta.name || userUid,
+            avatar: parsed.user.avatar || userMeta.avatar_url || userMeta.avatar || '',
+            status_emoji: parsed.user.status_emoji || '🌸',
+            status_text: parsed.user.status_text || 'Available',
+            about: parsed.user.about || 'Available 🌸',
+            status: 'online',
+            phone: parsed.user.phone || userMeta.phone || '',
           };
         }
       }
     } catch (e) {
       // ignore
     }
-    return CURRENT_USER;
+    return null;
   });
 
   // Real Presence Tracking State (Sets of active online IDs, emails, usernames, phones)
@@ -102,12 +101,13 @@ export default function App() {
     onlinePhones: new Set(),
   });
 
-  // Load conversations and their cached messages (Zero-loss guarantee, NO fake contacts)
+  // Load conversations exclusively for the authenticated user from cache
   const [conversations, setConversations] = useState(() => {
     try {
       const savedSession = localStorage.getItem('bloom_auth_session');
       const user = savedSession ? JSON.parse(savedSession)?.user : null;
-      const userId = user?.id || 'current_user';
+      const userId = user?.id;
+      if (!userId || userId === 'current_user') return [];
       const cached = chatService.getConversationsFromCache(userId);
 
       if (cached && cached.length > 0) {
@@ -123,7 +123,6 @@ export default function App() {
     } catch (e) {
       console.warn('Initial conversation load error:', e);
     }
-    // Clean empty start - No fake contacts!
     return [];
   });
 
@@ -131,7 +130,8 @@ export default function App() {
     try {
       const savedSession = localStorage.getItem('bloom_auth_session');
       const user = savedSession ? JSON.parse(savedSession)?.user : null;
-      const userId = user?.id || 'current_user';
+      const userId = user?.id;
+      if (!userId || userId === 'current_user') return null;
       const cached = chatService.getConversationsFromCache(userId);
       if (cached && cached[0]?.id) return cached[0].id;
     } catch (e) {}
@@ -183,42 +183,90 @@ export default function App() {
     }
   }, []);
 
+  // Central function to load user-specific conversations from Supabase
+  const loadUserConversations = async (userId) => {
+    if (!userId || userId === 'current_user') return;
+    try {
+      const remoteConvs = await chatService.fetchUserConversations(userId);
+      if (Array.isArray(remoteConvs)) {
+        // Exclusively user's own conversations - NEVER merge with previous user's contacts
+        setConversations(remoteConvs);
+        chatService.saveConversationsToCache(userId, remoteConvs);
+
+        if (remoteConvs.length > 0) {
+          setActiveConversationId((curr) => {
+            const stillExists = remoteConvs.some((c) => c.id === curr);
+            return stillExists ? curr : remoteConvs[0].id;
+          });
+        } else {
+          setActiveConversationId(null);
+        }
+      }
+    } catch (err) {
+      console.warn('loadUserConversations error:', err);
+      const cached = chatService.getConversationsFromCache(userId);
+      setConversations(cached || []);
+    }
+  };
+
+  // Central function to sync profile from DB and load user's conversations
+  const syncUserProfileAndConversations = async (authUser) => {
+    if (!authUser || !authUser.id) return;
+    try {
+      const profile = await chatService.ensureProfile(authUser);
+      const meta = authUser.user_metadata || {};
+      const cleanEmail = authUser.email || '';
+      const cleanUsername = (
+        profile?.username ||
+        profile?.name ||
+        meta.username ||
+        meta.userId ||
+        meta.name ||
+        cleanEmail.split('@')[0] ||
+        'user'
+      ).toLowerCase().trim().replace(/^@/, '');
+
+      const userDetails = {
+        id: authUser.id,
+        email: cleanEmail,
+        userId: cleanUsername,
+        username: cleanUsername,
+        name: profile?.name || cleanUsername,
+        avatar: profile?.avatar_url || meta.avatar_url || meta.avatar || '',
+        about: profile?.about || 'Available 🌸',
+        status_emoji: profile?.status_emoji || '🌸',
+        status_text: profile?.status_text || 'Available',
+        status: 'online',
+        phone: profile?.phone || '',
+      };
+
+      setCurrentUser(userDetails);
+      setAuthenticatedUser(authUser);
+      setIsAuthenticated(true);
+      localStorage.setItem(
+        'bloom_auth_session',
+        JSON.stringify({ isAuthenticated: true, user: userDetails })
+      );
+
+      // Load conversations exclusively for this user
+      await loadUserConversations(authUser.id);
+    } catch (e) {
+      console.warn('syncUserProfileAndConversations notice:', e);
+    }
+  };
+
   // Sync and restore session with Supabase Auth on mount / refresh
   useEffect(() => {
     authService
       .getSession()
       .then((session) => {
         if (session?.user) {
-          setIsAuthenticated(true);
-          setAuthenticatedUser(session.user);
-          const meta = session.user.user_metadata || {};
-          const cleanEmail = session.user.email || '';
-          const userUid =
-            meta.userId ||
-            session.user.userId ||
-            cleanEmail.split('@')[0] ||
-            'user';
-
-          setCurrentUser((prev) => ({
-            ...prev,
-            id: session.user.id || prev.id,
-            email: cleanEmail || prev.email,
-            userId: userUid,
-            phone:
-              meta.phone ||
-              session.user.phone ||
-              prev.phone ||
-              '',
-            name:
-              meta.name ||
-              cleanEmail.split('@')[0] ||
-              prev.name,
-            avatar: meta.avatar || prev.avatar || '',
-          }));
-          localStorage.setItem(
-            'bloom_auth_session',
-            JSON.stringify({ isAuthenticated: true, user: session.user })
-          );
+          syncUserProfileAndConversations(session.user);
+        } else {
+          const saved = localStorage.getItem('bloom_auth_session');
+          if (saved) {
+            handleLogout();
+          }
         }
       })
       .catch(() => {});
@@ -226,40 +274,9 @@ export default function App() {
     // Listen to real-time auth changes
     const { data: authSub } = authService.onAuthStateChange((event, session) => {
       if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
-        setIsAuthenticated(true);
-        setAuthenticatedUser(session.user);
-        const meta = session.user.user_metadata || {};
-        const cleanEmail = session.user.email || '';
-        const userUid =
-          meta.userId ||
-          session.user.userId ||
-          cleanEmail.split('@')[0] ||
-          'user';
-
-        setCurrentUser((prev) => ({
-          ...prev,
-          id: session.user.id || prev.id,
-          email: cleanEmail || prev.email,
-          userId: userUid,
-          phone:
-            meta.phone ||
-            session.user.phone ||
-            prev.phone ||
-            '',
-          name:
-            meta.name ||
-            cleanEmail.split('@')[0] ||
-            prev.name,
-          avatar: meta.avatar || prev.avatar || '',
-        }));
-        localStorage.setItem(
-          'bloom_auth_session',
-          JSON.stringify({ isAuthenticated: true, user: session.user })
-        );
+        syncUserProfileAndConversations(session.user);
       } else if (event === 'SIGNED_OUT') {
-        setIsAuthenticated(false);
-        setAuthenticatedUser(null);
-        localStorage.removeItem('bloom_auth_session');
+        handleLogout();
       }
     });
 
@@ -464,34 +481,10 @@ export default function App() {
     };
   }, [currentUser?.email, currentUser?.id]);
 
-  // Load conversations from Supabase on mount/auth change
+  // Refresh conversations from Supabase when current user ID changes
   useEffect(() => {
     if (!currentUser?.id || currentUser.id === 'current_user') return;
-
-    chatService.ensureProfile(currentUser);
-
-    chatService.fetchUserConversations(currentUser.id).then((remoteConvs) => {
-      if (remoteConvs && remoteConvs.length > 0) {
-        setConversations((prev) => {
-          const map = new Map();
-          remoteConvs.forEach((rc) => {
-            const key = (rc.user?.userId || rc.user?.id || rc.id).toLowerCase().trim();
-            map.set(key, rc);
-          });
-          prev.forEach((pc) => {
-            const key = (pc.user?.userId || pc.user?.id || pc.id).toLowerCase().trim();
-            if (!map.has(key)) {
-              map.set(key, pc);
-            }
-          });
-          const merged = Array.from(map.values());
-          chatService.saveConversationsToCache(currentUser.id, merged);
-          return merged;
-        });
-
-        setActiveConversationId((curr) => curr || remoteConvs[0]?.id || null);
-      }
-    });
+    loadUserConversations(currentUser.id);
   }, [currentUser?.id]);
 
   // Realtime Postgres Changes Subscription for the Active Conversation
@@ -607,12 +600,26 @@ export default function App() {
     };
   }, [activeConversationId, currentUser?.id]);
 
-  // Handle Logout
+  // Handle Logout - completely clears previous user's data from UI and state
   const handleLogout = async () => {
-    localStorage.removeItem('bloom_auth_session');
-    sessionStorage.clear();
     setIsAuthenticated(false);
     setAuthenticatedUser(null);
+    setCurrentUser(null);
+    setConversations([]);
+    setActiveConversationId(null);
+    setProfileModalUser(null);
+    setContactStatuses([]);
+    setMyStatuses([]);
+    setPresenceState({
+      onlineUserIds: new Set(),
+      onlineEmails: new Set(),
+      onlineUsernames: new Set(),
+      onlinePhones: new Set(),
+    });
+
+    localStorage.removeItem('bloom_auth_session');
+    sessionStorage.clear();
+
     try {
       await authService.signOut();
     } catch (e) {
@@ -620,36 +627,12 @@ export default function App() {
     }
   };
 
-  // If not authenticated, display the Login & Forgot Password screen
-  if (!isAuthenticated) {
+  // If not authenticated or no active user profile, display the Login screen
+  if (!isAuthenticated || !currentUser) {
     return (
       <AuthPage
         onLoginSuccess={(user) => {
-          setAuthenticatedUser(user);
-          setIsAuthenticated(true);
-          localStorage.setItem(
-            'bloom_auth_session',
-            JSON.stringify({ isAuthenticated: true, user })
-          );
-          if (user) {
-            const meta = user.user_metadata || {};
-            const cleanEmail = user.email || '';
-            const userUid =
-              meta.userId ||
-              user.userId ||
-              cleanEmail.split('@')[0] ||
-              'user';
-
-            setCurrentUser((prev) => ({
-              ...prev,
-              id: user.id || prev.id,
-              email: cleanEmail || prev.email,
-              userId: userUid,
-              phone: meta.phone || user.phone || prev.phone || '',
-              name: meta.name || cleanEmail.split('@')[0] || prev.name,
-              avatar: meta.avatar || prev.avatar || '',
-            }));
-          }
+          syncUserProfileAndConversations(user);
         }}
       />
     );
@@ -700,8 +683,11 @@ export default function App() {
 
     const nowTimestamp = Date.now();
     const tempMsgId = `msg-${nowTimestamp}-${Math.random().toString(36).slice(2, 6)}`;
-    const myId = currentUser.id || 'current_user';
+    const myId = currentUser?.id;
+    if (!myId) return;
+    const recipientId = currentConv.user?.id || null;
     const myEmail = (currentUser.email || '').toLowerCase().trim();
+    const myUsername = (currentUser.username || currentUser.userId || '').replace(/^@/, '');
 
     const isReceiverOnline = isContactOnline(currentConv.user, presenceState);
     const initialStatus = isReceiverOnline ? 'delivered' : 'sent';
@@ -710,8 +696,10 @@ export default function App() {
       id: tempMsgId,
       conversationId: activeConversationId,
       senderId: myId,
+      recipientId,
       senderEmail: myEmail,
-      senderName: currentUser.name || myEmail.split('@')[0],
+      senderName: currentUser.name || myUsername || myEmail.split('@')[0],
+      senderUserId: myUsername,
       text: text || '',
       attachment: attachment || null,
       timestamp: timeString,
@@ -743,8 +731,9 @@ export default function App() {
       const saved = await chatService.sendMessage({
         conversationId: activeConversationId,
         senderId: myId,
+        recipientId,
         senderEmail: myEmail,
-        senderName: currentUser.name || myEmail.split('@')[0],
+        senderName: currentUser.name || myUsername || myEmail.split('@')[0],
         text: text || '',
         attachment,
         status: initialStatus,
@@ -1026,10 +1015,15 @@ export default function App() {
     setCurrentUser(updatedUser);
     setProfileModalUser(updatedUser);
 
-    if (currentUser?.id && (updatedUser.status_emoji || updatedUser.status_text)) {
-      await chatService.updateUserStatus(currentUser.id, {
-        statusEmoji: updatedUser.status_emoji,
-        statusText: updatedUser.status_text,
+    if (currentUser?.id) {
+      await chatService.updateProfile(currentUser.id, {
+        name: updatedUser.name,
+        username: updatedUser.userId || updatedUser.username,
+        avatar_url: updatedUser.avatar,
+        status_emoji: updatedUser.status_emoji,
+        status_text: updatedUser.status_text,
+        about: updatedUser.about,
+        phone: updatedUser.phone,
       });
     }
 
@@ -1039,6 +1033,7 @@ export default function App() {
         const parsed = JSON.parse(saved);
         parsed.user = {
           ...parsed.user,
+          ...updatedUser,
           user_metadata: {
             ...(parsed.user?.user_metadata || {}),
             status_emoji: updatedUser.status_emoji,
