@@ -250,6 +250,58 @@ export const chatService = {
   },
 
   /**
+   * Save / update a discovered user into local registered cache and directory
+   */
+  registerLocalUser(userData) {
+    if (!userData) return;
+    const handle = (userData.username || userData.userId || userData.name || '').toLowerCase().trim().replace(/^@/, '');
+    if (!handle) return;
+
+    try {
+      const email = (userData.email || `${handle}@bloom.chat`).toLowerCase().trim();
+      const dir = JSON.parse(localStorage.getItem('bloom_user_directory') || '{}');
+      dir[handle] = email;
+      localStorage.setItem('bloom_user_directory', JSON.stringify(dir));
+
+      const allReg = JSON.parse(localStorage.getItem('bloom_registered_users') || '[]');
+      const idx = allReg.findIndex((u) => (u.username || u.name)?.toLowerCase() === handle);
+      const userObj = {
+        id: userData.id || userData.user_id || getEmailUuid(email),
+        name: userData.name || handle,
+        username: handle,
+        userId: handle,
+        email: email,
+        avatar_url: userData.avatar_url || userData.avatar || '',
+        status_emoji: userData.status_emoji || '🌸',
+        status_text: userData.status_text || 'Available',
+        about: userData.about || 'Available 🌸',
+        status: userData.status || 'online',
+      };
+      if (idx >= 0) {
+        allReg[idx] = { ...allReg[idx], ...userObj };
+      } else {
+        allReg.push(userObj);
+      }
+      localStorage.setItem('bloom_registered_users', JSON.stringify(allReg));
+    } catch (e) {}
+  },
+
+  /**
+   * Request profiles from all active online peers across devices/browsers
+   */
+  requestActiveProfiles() {
+    try {
+      if (globalRealtimeChannel) {
+        globalRealtimeChannel.send({
+          type: 'broadcast',
+          event: 'request_profiles',
+          payload: {},
+        });
+      }
+    } catch (e) {}
+  },
+
+  /**
    * Fetch all registered users in Bloom
    * Queries Supabase profiles, merges local directory and registered cache,
    * and excludes currently logged-in user.
@@ -1001,12 +1053,55 @@ export const chatService = {
               if (p.user_id) onlineUserIds.add(String(p.user_id).toLowerCase());
               if (p.email_uuid) onlineUserIds.add(String(p.email_uuid).toLowerCase());
               if (p.email) onlineEmails.add(String(p.email).toLowerCase().trim());
+
+              // Auto-register discovered user in local directory
+              const handle = (p.username || p.userId || p.name || p.email?.split('@')[0] || '').toLowerCase().trim().replace(/^@/, '');
+              if (handle) {
+                this.registerLocalUser({
+                  id: p.user_id || p.email_uuid,
+                  username: handle,
+                  userId: handle,
+                  name: p.name || handle,
+                  email: p.email,
+                  avatar_url: p.avatar,
+                  status_emoji: p.status_emoji || '🌸',
+                  status_text: p.status_text || 'Available',
+                  status: 'online',
+                });
+              }
             });
           }
         });
 
         if (typeof onPresenceChange === 'function') {
           onPresenceChange({ onlineUserIds, onlineEmails });
+        }
+      })
+      // User Profile Broadcast across different browsers/devices
+      .on('broadcast', { event: 'user_profile_broadcast' }, ({ payload }) => {
+        if (!payload) return;
+        this.registerLocalUser(payload);
+        if (typeof onPresenceChange === 'function') {
+          onPresenceChange({ onlineUserIds: new Set(), onlineEmails: new Set() });
+        }
+      })
+      // Respond to profile requests from peers
+      .on('broadcast', { event: 'request_profiles' }, () => {
+        if (currentUser && globalRealtimeChannel) {
+          globalRealtimeChannel.send({
+            type: 'broadcast',
+            event: 'user_profile_broadcast',
+            payload: {
+              id: userUuid,
+              email: cleanEmail,
+              username: currentUser.username || currentUser.userId || cleanEmail.split('@')[0],
+              userId: currentUser.username || currentUser.userId || cleanEmail.split('@')[0],
+              name: currentUser.name || cleanEmail.split('@')[0],
+              avatar: currentUser.avatar || '',
+              status_emoji: currentUser.status_emoji || '🌸',
+              status_text: currentUser.status_text || 'Available',
+            },
+          });
         }
       })
       // Direct Broadcast Listener
@@ -1068,13 +1163,34 @@ export const chatService = {
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-          await channel.track({
+          const profilePayload = {
+            id: userUuid,
             user_id: userUuid,
             email_uuid: emailUuid,
             email: cleanEmail,
+            username: currentUser.username || currentUser.userId || cleanEmail.split('@')[0],
+            userId: currentUser.username || currentUser.userId || cleanEmail.split('@')[0],
             name: currentUser.name || cleanEmail.split('@')[0],
             avatar: currentUser.avatar || '',
+            status_emoji: currentUser.status_emoji || '🌸',
+            status_text: currentUser.status_text || 'Available',
             online_at: new Date().toISOString(),
+          };
+
+          await channel.track(profilePayload);
+
+          // Broadcast user profile to all active connected clients across devices
+          channel.send({
+            type: 'broadcast',
+            event: 'user_profile_broadcast',
+            payload: profilePayload,
+          });
+
+          // Request profile directory from all active connected clients
+          channel.send({
+            type: 'broadcast',
+            event: 'request_profiles',
+            payload: {},
           });
         }
       });

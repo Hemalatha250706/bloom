@@ -258,9 +258,34 @@ export default function Sidebar({
               </div>
             ) : (
               !isSearchingUsers && (
-                <p className="text-xs text-stone-400 italic py-2 px-2">
-                  No registered users found matching "@{searchQuery.trim().replace(/^@/, '')}"
-                </p>
+                <div className="py-2.5 px-3 rounded-2xl bg-violet-50/80 border border-violet-200 mt-1.5 shadow-2xs">
+                  <p className="text-xs text-stone-700 font-semibold mb-0.5">
+                    User not in recent list: @{searchQuery.trim().replace(/^@/, '')}
+                  </p>
+                  <p className="text-[11px] text-stone-500 mb-2">
+                    Click below to open a direct private chat with this user ID.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const handle = searchQuery.trim().toLowerCase().replace(/^@/, '');
+                      if (onStartNewChat) {
+                        onStartNewChat({
+                          id: null,
+                          username: handle,
+                          userId: handle,
+                          name: handle,
+                          email: `${handle}@bloom.chat`,
+                        });
+                      }
+                      setSearchQuery('');
+                    }}
+                    className="w-full py-1.5 px-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    <span>Message @{searchQuery.trim().replace(/^@/, '')}</span>
+                  </button>
+                </div>
               )
             )}
 

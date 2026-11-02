@@ -23,6 +23,11 @@ export default function NewChatModal({
     setSearchQuery('');
     setError('');
 
+    // Request active profiles from all connected online clients
+    try {
+      chatService.requestActiveProfiles();
+    } catch (e) {}
+
     chatService
       .fetchRegisteredUsers(currentUser?.id)
       .then((users) => {
