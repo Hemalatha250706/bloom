@@ -777,14 +777,64 @@ export default function App() {
         );
       },
       // Real-time Emoji Reactions
-      onMessageReaction: ({ messageId, conversationId, reaction }) => {
+      onMessageReaction: ({ messageId, conversationId, reaction, emoji, userId }) => {
+        const nextEmoji = emoji || reaction;
         setConversations((prev) =>
           prev.map((c) => {
-            if (c.id === conversationId) {
-              const updatedMsgs = c.messages.map((m) =>
-                m.id === messageId ? { ...m, reaction } : m
-              );
-              chatService.saveMessagesToCache(conversationId, updatedMsgs);
+            if (c.id === conversationId || !conversationId) {
+              const updatedMsgs = c.messages.map((m) => {
+                if (m.id === messageId) {
+                  const existingReactions = Array.isArray(m.reactions) ? m.reactions : [];
+                  const otherReactions = existingReactions.filter(
+                    (r) => (r.userId || r.user_id) !== userId
+                  );
+                  const updatedReactions = nextEmoji
+                    ? [
+                        ...otherReactions,
+                        {
+                          userId,
+                          user_id: userId,
+                          emoji: nextEmoji,
+                          createdAt: new Date().toISOString(),
+                        },
+                      ]
+                    : otherReactions;
+
+                  return {
+                    ...m,
+                    reaction: nextEmoji,
+                    reactions: updatedReactions,
+                  };
+                }
+                return m;
+              });
+              chatService.saveMessagesToCache(c.id, updatedMsgs);
+              return { ...c, messages: updatedMsgs };
+            }
+            return c;
+          })
+        );
+      },
+      // Real-time Emoji Reaction Removed
+      onMessageReactionRemoved: ({ messageId, conversationId, userId, reaction }) => {
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id === conversationId || !conversationId) {
+              const updatedMsgs = c.messages.map((m) => {
+                if (m.id === messageId) {
+                  const existingReactions = Array.isArray(m.reactions) ? m.reactions : [];
+                  const updatedReactions = existingReactions.filter(
+                    (r) => (r.userId || r.user_id) !== userId
+                  );
+                  return {
+                    ...m,
+                    reaction: reaction || (updatedReactions[0]?.emoji || null),
+                    reactions: updatedReactions,
+                  };
+                }
+                return m;
+              });
+              chatService.saveMessagesToCache(c.id, updatedMsgs);
               return { ...c, messages: updatedMsgs };
             }
             return c;
@@ -1339,18 +1389,32 @@ export default function App() {
     }
   };
 
-  // Add/toggle reaction on a message (Saved in Supabase & broadcast in real time)
+  // Add or update reaction on a message (Saved in Supabase & broadcast in real time)
   const handleAddReaction = async (messageId, emoji) => {
-    if (!messageId) return;
+    if (!messageId || !emoji) return;
 
     setConversations((prev) => {
       const updated = prev.map((conv) => {
         if (conv.id === activeConversationId) {
           const updatedMsgs = conv.messages.map((msg) => {
             if (msg.id === messageId) {
+              const currentReactions = Array.isArray(msg.reactions) ? msg.reactions : [];
+              const otherReactions = currentReactions.filter(
+                (r) => (r.userId || r.user_id) !== currentUser?.id
+              );
+              const updatedReactions = [
+                ...otherReactions,
+                {
+                  userId: currentUser?.id,
+                  user_id: currentUser?.id,
+                  emoji,
+                  createdAt: new Date().toISOString(),
+                },
+              ];
               return {
                 ...msg,
-                reaction: msg.reaction === emoji ? null : emoji,
+                reaction: emoji,
+                reactions: updatedReactions,
               };
             }
             return msg;
@@ -1367,7 +1431,49 @@ export default function App() {
     });
 
     if (currentUser?.id) {
-      await chatService.toggleMessageReaction({
+      await chatService.addOrUpdateMessageReaction({
+        messageId,
+        conversationId: activeConversationId,
+        currentUserId: currentUser.id,
+        emoji,
+      });
+    }
+  };
+
+  // Delete only the current user's reaction on a message (after confirmation)
+  const handleRemoveReaction = async (messageId, emoji) => {
+    if (!messageId) return;
+
+    setConversations((prev) => {
+      const updated = prev.map((conv) => {
+        if (conv.id === activeConversationId) {
+          const updatedMsgs = conv.messages.map((msg) => {
+            if (msg.id === messageId) {
+              const currentReactions = Array.isArray(msg.reactions) ? msg.reactions : [];
+              const updatedReactions = currentReactions.filter(
+                (r) => (r.userId || r.user_id) !== currentUser?.id
+              );
+              return {
+                ...msg,
+                reaction: updatedReactions[0]?.emoji || null,
+                reactions: updatedReactions,
+              };
+            }
+            return msg;
+          });
+          chatService.saveMessagesToCache(conv.id, updatedMsgs);
+          return {
+            ...conv,
+            messages: updatedMsgs,
+          };
+        }
+        return conv;
+      });
+      return updated;
+    });
+
+    if (currentUser?.id) {
+      await chatService.deleteMessageReaction({
         messageId,
         conversationId: activeConversationId,
         currentUserId: currentUser.id,
@@ -1485,10 +1591,11 @@ export default function App() {
     } catch (e) {}
   };
 
-  // Post a new real status update (persisted and broadcast live with accurate timestamps)
-  const handlePostNewStatus = (storyItem) => {
+  // Post a new real status update (persisted in DB and broadcast live with accurate timestamps)
+  const handlePostNewStatus = async (storyItem) => {
     const now = Date.now();
     const isoString = new Date(now).toISOString();
+    const expiresAt = new Date(now + 24 * 60 * 60 * 1000).toISOString();
 
     const storyWithMeta = {
       ...storyItem,
@@ -1497,9 +1604,11 @@ export default function App() {
       comments: storyItem.comments || [],
       likesCount: (storyItem.likes || []).length,
       createdAt: storyItem.createdAt && storyItem.createdAt !== 'Just now' ? storyItem.createdAt : isoString,
+      created_at: isoString,
+      expires_at: expiresAt,
       timestamp: typeof storyItem.timestamp === 'number' ? storyItem.timestamp : now,
     };
-    const existingStories = myStatuses[0]?.stories || [];
+    const existingStories = (myStatuses[0]?.stories || []).filter((s) => !chatService.isStatusExpired(s));
     const statusId = `status-me-${now}`;
     const myEmail = (currentUser.email || '').toLowerCase().trim();
     const myHandle = (currentUser.username || currentUser.userId || myEmail.split('@')[0] || 'user').replace(/^@/, '');
@@ -1512,12 +1621,29 @@ export default function App() {
       userAvatar: currentUser.avatar,
       timestamp: now,
       created_at: isoString,
+      expires_at: expiresAt,
       stories: [storyWithMeta, ...existingStories],
     };
 
     const newStatuses = [updatedMyStatus];
     setMyStatuses(newStatuses);
     chatService.saveMyStatusesToCache(myEmail, newStatuses);
+
+    // Save to Supabase public.statuses table
+    if (currentUser?.id) {
+      chatService.postStatus({
+        userId: currentUser.id,
+        content: storyItem.url || storyItem.text || '',
+        type: storyItem.type || 'image',
+        url: storyItem.url || null,
+        text: storyItem.text || null,
+        background: storyItem.background || null,
+        caption: storyItem.caption || null,
+        emoji: storyItem.emoji || '🌸',
+        createdAt: isoString,
+        expiresAt: expiresAt,
+      });
+    }
 
     // Broadcast live status update to other connected users
     chatService.broadcastStatus({
@@ -1528,6 +1654,7 @@ export default function App() {
       userAvatar: currentUser.avatar,
       timestamp: now,
       created_at: isoString,
+      expires_at: expiresAt,
       stories: [storyWithMeta],
     });
   };
@@ -1732,20 +1859,39 @@ export default function App() {
     }
   };
 
-  // Record viewing a story in real-time
-  const handleViewStory = (statusId, storyId) => {
+  // Record viewing a story in real-time (preserves first view time & records in DB)
+  const handleViewStory = (statusId, storyId, statusOwnerId) => {
     if (!currentUser?.email) return;
+
+    // Never count the status owner's own view as a view
+    if (currentUser?.id && statusOwnerId && String(currentUser.id) === String(statusOwnerId)) {
+      return;
+    }
+
     const viewNow = Date.now();
     if (statusId) {
       markStatusAsViewed(statusId);
     }
+
+    // Persist to Supabase status_views table (ignoreDuplicates: true ensures first view time is preserved)
+    if (currentUser?.id && statusId) {
+      chatService.recordStatusView({
+        statusId,
+        viewerId: currentUser.id,
+        statusOwnerId,
+        viewedAt: new Date(viewNow).toISOString(),
+      });
+    }
+
     chatService.broadcastStatusView({
       statusId,
       storyId,
       viewer: {
         id: currentUser.id,
+        userId: currentUser.id,
         email: currentUser.email,
         name: currentUser.name,
+        username: currentUser.username || currentUser.name,
         avatar: currentUser.avatar || '',
         timestamp: viewNow,
         viewedAt: viewNow,
@@ -1881,6 +2027,7 @@ export default function App() {
                 currentUser={currentUser}
                 isTyping={isTyping}
                 onAddReaction={handleAddReaction}
+                onRemoveReaction={handleRemoveReaction}
                 onTogglePinMessage={handleTogglePinMessage}
               />
 

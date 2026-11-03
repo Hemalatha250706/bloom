@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Camera, ChevronDown, ChevronRight, Eye, Sparkles } from 'lucide-react';
-import { formatStatusTime, formatViewedTime } from '../services/chatService.js';
+import { formatStatusTime, formatViewedTime, filterActiveStatuses } from '../services/chatService.js';
 
 export default function StatusSidebar({
   currentUser,
@@ -14,16 +14,21 @@ export default function StatusSidebar({
   onOpenLiveCamera,
 }) {
   const [showViewed, setShowViewed] = useState(true);
-  const hasMyStatus = myStatuses.length > 0;
-  const myTotalViews = myStatuses.reduce(
+
+  // Automatically filter out expired statuses older than 24 hours
+  const activeMyStatuses = filterActiveStatuses(myStatuses);
+  const activeContactStatuses = filterActiveStatuses(contactStatuses);
+
+  const hasMyStatus = activeMyStatuses.length > 0;
+  const myTotalViews = activeMyStatuses.reduce(
     (acc, st) => acc + (st.viewers?.length || 0),
     0
   );
 
-  const recentStatuses = contactStatuses.filter(
+  const recentStatuses = activeContactStatuses.filter(
     (st) => !viewedStatusIds.includes(st.id)
   );
-  const viewedStatuses = contactStatuses.filter((st) =>
+  const viewedStatuses = activeContactStatuses.filter((st) =>
     viewedStatusIds.includes(st.id)
   );
 
@@ -108,7 +113,11 @@ export default function StatusSidebar({
             <div className="text-[11px] text-stone-500 truncate mt-0.5 flex items-center gap-1.5">
               <span>
                 {hasMyStatus
-                  ? formatStatusTime(myStatuses[0]?.timestamp || myStatuses[0]?.stories?.[0]?.createdAt)
+                  ? formatStatusTime(
+                      activeMyStatuses[0]?.timestamp ||
+                        activeMyStatuses[0]?.stories?.[0]?.createdAt ||
+                        activeMyStatuses[0]?.created_at
+                    )
                   : 'Tap to add status update'}
               </span>
               {hasMyStatus && (

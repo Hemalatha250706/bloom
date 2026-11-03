@@ -57,10 +57,10 @@ export default function StatusViewerModal({
     setIsLiked(hasUserLiked);
   }, [currentStoryIndex, hasUserLiked]);
 
-  // Trigger view event for contacts' statuses
+  // Trigger view event for contacts' statuses (Never count owner's own view)
   useEffect(() => {
     if (!isMyStatus && statusData && currentStory && typeof onViewStory === 'function') {
-      onViewStory(statusData.id, currentStory.id);
+      onViewStory(statusData.id, currentStory.id, statusData.userId);
     }
   }, [statusData?.id, currentStory?.id, isMyStatus]);
 
@@ -510,7 +510,14 @@ export default function StatusViewerModal({
                           </div>
                         )}
                         <div>
-                          <p className="text-xs font-bold text-white">{v.name}</p>
+                          <p className="text-xs font-bold text-white flex items-center gap-1">
+                            <span>{v.name}</span>
+                            {v.username && (
+                              <span className="text-[10px] text-stone-400 font-normal">
+                                @{v.username.replace(/^@/, '')}
+                              </span>
+                            )}
+                          </p>
                           <p className="text-[10px] text-stone-400">
                             {formatViewedTime(v.viewedAt || v.timestamp || (v.time && v.time !== 'Just now' ? v.time : null))}
                           </p>

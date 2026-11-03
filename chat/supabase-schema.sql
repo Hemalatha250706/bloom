@@ -149,19 +149,25 @@ CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON public.message_react
 CREATE INDEX IF NOT EXISTS idx_message_reactions_user ON public.message_reactions(user_id);
 
 -- ==============================================================================
--- 5. STATUSES & STORIES (Optional 24-hour stories feature)
+-- 5. STATUSES & STORIES (24-hour stories feature with expiration & view tracking)
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.statuses (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  content TEXT,
   type TEXT DEFAULT 'image', -- 'image' | 'text'
   url TEXT,
   text TEXT,
   background TEXT,
   caption TEXT,
+  emoji TEXT DEFAULT '🌸',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '24 hours')
 );
+
+ALTER TABLE public.statuses ADD COLUMN IF NOT EXISTS content TEXT;
+ALTER TABLE public.statuses ADD COLUMN IF NOT EXISTS emoji TEXT DEFAULT '🌸';
+ALTER TABLE public.statuses ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '24 hours');
 
 CREATE TABLE IF NOT EXISTS public.status_views (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -178,6 +184,11 @@ CREATE TABLE IF NOT EXISTS public.status_likes (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (status_id, user_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_statuses_user ON public.statuses(user_id);
+CREATE INDEX IF NOT EXISTS idx_statuses_expires_at ON public.statuses(expires_at);
+CREATE INDEX IF NOT EXISTS idx_status_views_status ON public.status_views(status_id);
+CREATE INDEX IF NOT EXISTS idx_status_views_viewer ON public.status_views(viewer_id);
 
 -- ==============================================================================
 -- 6. AUTOMATIC PROFILE CREATION TRIGGER (When a new user signs up in Auth)
@@ -400,11 +411,14 @@ CREATE POLICY "Messages delete"
 -- Status Policies
 -- ------------------------------------------------------------------------------
 DROP POLICY IF EXISTS "Statuses viewable by all users" ON public.statuses;
+DROP POLICY IF EXISTS "Statuses select" ON public.statuses;
 DROP POLICY IF EXISTS "Users can create their own status" ON public.statuses;
 DROP POLICY IF EXISTS "Users can delete their own status" ON public.statuses;
 
-CREATE POLICY "Statuses viewable by all users" 
-  ON public.statuses FOR SELECT USING (expires_at > NOW());
+-- Active statuses (not expired) are viewable; owners can view their own
+CREATE POLICY "Statuses select" 
+  ON public.statuses FOR SELECT 
+  USING (expires_at > NOW() OR user_id = auth.uid());
 
 CREATE POLICY "Users can create their own status" 
   ON public.statuses FOR INSERT WITH CHECK (auth.uid() = user_id);
@@ -412,14 +426,51 @@ CREATE POLICY "Users can create their own status"
 CREATE POLICY "Users can delete their own status" 
   ON public.statuses FOR DELETE USING (auth.uid() = user_id);
 
+-- Status Views Policies
 DROP POLICY IF EXISTS "Users can view seen list for their own status" ON public.status_views;
 DROP POLICY IF EXISTS "Users can insert their own view" ON public.status_views;
+DROP POLICY IF EXISTS "Status views select" ON public.status_views;
+DROP POLICY IF EXISTS "Status views insert" ON public.status_views;
+DROP POLICY IF EXISTS "Status views update" ON public.status_views;
+DROP POLICY IF EXISTS "Status views delete" ON public.status_views;
 
-CREATE POLICY "Users can view seen list for their own status" 
-  ON public.status_views FOR SELECT USING (true);
+-- Only status owner can view all viewers of their status (viewer can see their own view record)
+CREATE POLICY "Status views select" 
+  ON public.status_views FOR SELECT 
+  USING (
+    viewer_id = auth.uid() OR 
+    EXISTS (
+      SELECT 1 FROM public.statuses s 
+      WHERE s.id = status_id AND s.user_id = auth.uid()
+    )
+  );
 
-CREATE POLICY "Users can insert their own view" 
-  ON public.status_views FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+-- Users can only record their own view, and cannot count their own status as a view
+CREATE POLICY "Status views insert" 
+  ON public.status_views FOR INSERT 
+  WITH CHECK (
+    viewer_id = auth.uid() AND 
+    NOT EXISTS (
+      SELECT 1 FROM public.statuses s 
+      WHERE s.id = status_id AND s.user_id = auth.uid()
+    )
+  );
+
+-- View records cannot be modified
+CREATE POLICY "Status views update" 
+  ON public.status_views FOR UPDATE 
+  USING (false);
+
+-- Only status owner or the viewer can delete a view record
+CREATE POLICY "Status views delete" 
+  ON public.status_views FOR DELETE 
+  USING (
+    viewer_id = auth.uid() OR 
+    EXISTS (
+      SELECT 1 FROM public.statuses s 
+      WHERE s.id = status_id AND s.user_id = auth.uid()
+    )
+  );
 
 DROP POLICY IF EXISTS "Status likes viewable by all" ON public.status_likes;
 DROP POLICY IF EXISTS "Users can like or unlike status" ON public.status_likes;
@@ -438,6 +489,7 @@ DROP POLICY IF EXISTS "Reactions insert" ON public.message_reactions;
 DROP POLICY IF EXISTS "Reactions update" ON public.message_reactions;
 DROP POLICY IF EXISTS "Reactions delete" ON public.message_reactions;
 
+-- Reactions viewable by participants of conversations
 CREATE POLICY "Reactions select" ON public.message_reactions FOR SELECT USING (true);
 CREATE POLICY "Reactions insert" ON public.message_reactions FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Reactions update" ON public.message_reactions FOR UPDATE USING (auth.uid() = user_id);
@@ -482,5 +534,19 @@ BEGIN
     WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'message_reactions'
   ) THEN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.message_reactions;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'statuses'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.statuses;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'status_views'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.status_views;
   END IF;
 END $$;

@@ -7,6 +7,7 @@ export default function ChatArea({
   currentUser,
   isTyping,
   onAddReaction,
+  onRemoveReaction,
   onTogglePinMessage,
 }) {
   const scrollRef = useRef(null);
@@ -112,8 +113,10 @@ export default function ChatArea({
                     message={msg}
                     isSender={isSender}
                     senderUser={conversation.user}
+                    currentUser={currentUser}
                     isPinned={msg.id === conversation.pinnedMessageId}
                     onAddReaction={onAddReaction}
+                    onRemoveReaction={onRemoveReaction}
                     onTogglePinMessage={onTogglePinMessage}
                   />
                 </div>

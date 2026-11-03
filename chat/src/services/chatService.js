@@ -55,7 +55,7 @@ export function formatDateLabel(dateObj) {
 }
 
 /**
- * Formats a timestamp into an accurate status time description (e.g. 'Just now', '5m ago', 'Today at 10:30 AM')
+ * Formats a timestamp into an accurate status time description (e.g. 'Just now', '5 minutes ago', '2 hours ago', 'Yesterday')
  */
 export function formatStatusTime(timeVal) {
   if (!timeVal) return 'Just now';
@@ -82,9 +82,14 @@ export function formatStatusTime(timeVal) {
   const diffMins = Math.floor(diffMs / (1000 * 60));
 
   if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffMins === 1) return '1 minute ago';
+  if (diffMins < 60) return `${diffMins} minutes ago`;
 
-  const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours === 1) return '1 hour ago';
+  if (diffHours < 24) return `${diffHours} hours ago`;
+
+  const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
 
   if (d.toDateString() === now.toDateString()) {
     return `Today at ${timeStr}`;
@@ -101,7 +106,7 @@ export function formatStatusTime(timeVal) {
 }
 
 /**
- * Formats the time a status was viewed by user (e.g. 'Today at 11:45 AM', 'at 11:45 AM (15m ago)')
+ * Formats the time a status was viewed by user (e.g. 'Today at 11:45 AM', 'Today at 11:45 AM (15m ago)')
  */
 export function formatViewedTime(viewedVal) {
   if (!viewedVal) return 'Recently';
@@ -125,12 +130,12 @@ export function formatViewedTime(viewedVal) {
 
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
-  const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
 
   if (d.toDateString() === now.toDateString()) {
     const diffMins = Math.floor(diffMs / (1000 * 60));
-    if (diffMins < 1) return `at ${timeStr} (Just now)`;
-    if (diffMins < 60) return `at ${timeStr} (${diffMins}m ago)`;
+    if (diffMins < 1) return `Today at ${timeStr} (Just now)`;
+    if (diffMins < 60) return `Today at ${timeStr} (${diffMins}m ago)`;
     return `Today at ${timeStr}`;
   }
 
@@ -142,6 +147,40 @@ export function formatViewedTime(viewedVal) {
 
   const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   return `${dateStr} at ${timeStr}`;
+}
+
+/**
+ * Checks if a status or story has exceeded its 24-hour expiration lifetime.
+ */
+export function isStatusExpired(status) {
+  if (!status) return true;
+  const now = Date.now();
+  if (status.expires_at) {
+    const expiresMs = new Date(status.expires_at).getTime();
+    if (!isNaN(expiresMs)) return now > expiresMs;
+  }
+  const createdMs = status.timestamp || (status.created_at ? new Date(status.created_at).getTime() : null);
+  if (createdMs && !isNaN(createdMs)) {
+    return now > (createdMs + 24 * 60 * 60 * 1000);
+  }
+  return false;
+}
+
+/**
+ * Filters out expired statuses and stories older than 24 hours.
+ */
+export function filterActiveStatuses(statuses) {
+  if (!Array.isArray(statuses)) return [];
+  return statuses
+    .map((st) => {
+      if (st.stories && Array.isArray(st.stories)) {
+        const activeStories = st.stories.filter((s) => !isStatusExpired(s));
+        if (activeStories.length === 0) return null;
+        return { ...st, stories: activeStories };
+      }
+      return isStatusExpired(st) ? null : st;
+    })
+    .filter(Boolean);
 }
 
 /**
@@ -219,6 +258,7 @@ export function mapSupabaseMessage(row) {
     attachment,
     status: row.status || 'delivered',
     reaction: row.reaction || null,
+    reactions: Array.isArray(row.reactions) ? row.reactions : [],
     timestamp: formatTimestamp(createdAt),
     date: formatDateLabel(createdAt),
     created_at: row.created_at || createdAt.toISOString(),
@@ -933,7 +973,39 @@ export const chatService = {
         console.warn('fetchMessagesForConversation DB notice:', error.message);
         return [];
       }
-      return (data || []).map(mapSupabaseMessage).filter(Boolean);
+      const messages = (data || []).map(mapSupabaseMessage).filter(Boolean);
+
+      // Also attach per-user reactions from message_reactions table
+      if (messages.length > 0) {
+        try {
+          const msgIds = messages.map((m) => m.id);
+          const { data: reactionsData } = await supabase
+            .from('message_reactions')
+            .select('*')
+            .in('message_id', msgIds);
+
+          if (reactionsData && reactionsData.length > 0) {
+            const reactionsMap = {};
+            reactionsData.forEach((r) => {
+              if (!reactionsMap[r.message_id]) reactionsMap[r.message_id] = [];
+              reactionsMap[r.message_id].push({
+                id: r.id,
+                userId: r.user_id,
+                user_id: r.user_id,
+                emoji: r.emoji,
+                createdAt: r.created_at,
+              });
+            });
+            messages.forEach((m) => {
+              if (reactionsMap[m.id]) {
+                m.reactions = reactionsMap[m.id];
+              }
+            });
+          }
+        } catch (e) {}
+      }
+
+      return messages;
     } catch (err) {
       console.warn('fetchMessagesForConversation exception:', err);
       return [];
@@ -1049,59 +1121,111 @@ export const chatService = {
   },
 
   /**
-   * Adds, updates, or removes an emoji reaction on a message.
-   * Updates Supabase and broadcasts to both users in real-time.
+   * Adds or updates an emoji reaction on a message for the authenticated user.
+   * Stores in message_reactions with UNIQUE(message_id, user_id) constraint.
    */
-  async toggleMessageReaction({ messageId, conversationId, currentUserId, emoji }) {
-    if (!messageId) return null;
+  async addOrUpdateMessageReaction({ messageId, conversationId, currentUserId, emoji }) {
+    if (!messageId || !currentUserId || !emoji) return null;
     try {
-      // 1. Fetch current reaction
-      const { data: currentMsg } = await supabase
-        .from('messages')
-        .select('reaction')
-        .eq('id', messageId)
-        .single();
-
-      const newReaction = currentMsg?.reaction === emoji ? null : emoji;
+      // 1. Upsert into message_reactions table
+      try {
+        await supabase
+          .from('message_reactions')
+          .upsert(
+            {
+              message_id: messageId,
+              user_id: currentUserId,
+              emoji,
+              created_at: new Date().toISOString(),
+            },
+            { onConflict: 'message_id,user_id' }
+          );
+      } catch (e) {
+        console.warn('message_reactions upsert notice:', e);
+      }
 
       // 2. Update messages table
-      await supabase
-        .from('messages')
-        .update({ reaction: newReaction })
-        .eq('id', messageId);
-
-      // 3. Upsert into message_reactions table if present
       try {
-        if (newReaction && currentUserId) {
-          await supabase
-            .from('message_reactions')
-            .upsert(
-              { message_id: messageId, user_id: currentUserId, emoji: newReaction },
-              { onConflict: 'message_id,user_id' }
-            );
-        } else if (!newReaction && currentUserId) {
-          await supabase
-            .from('message_reactions')
-            .delete()
-            .eq('message_id', messageId)
-            .eq('user_id', currentUserId);
-        }
+        await supabase
+          .from('messages')
+          .update({ reaction: emoji })
+          .eq('id', messageId);
       } catch (e) {}
 
-      // 4. Broadcast live reaction event
+      // 3. Broadcast live reaction event
       if (globalRealtimeChannel) {
         globalRealtimeChannel.send({
           type: 'broadcast',
           event: 'message_reaction',
-          payload: { messageId, conversationId, reaction: newReaction, userId: currentUserId },
+          payload: { messageId, conversationId, reaction: emoji, emoji, userId: currentUserId },
         });
       }
 
-      return newReaction;
+      return emoji;
     } catch (e) {
-      console.warn('toggleMessageReaction exception:', e);
+      console.warn('addOrUpdateMessageReaction exception:', e);
       return emoji;
     }
+  },
+
+  /**
+   * Deletes only the authenticated user's reaction from a message.
+   * Does NOT delete other users' reactions.
+   */
+  async deleteMessageReaction({ messageId, conversationId, currentUserId, emoji }) {
+    if (!messageId || !currentUserId) return null;
+    try {
+      // 1. Delete user's row from message_reactions table
+      try {
+        await supabase
+          .from('message_reactions')
+          .delete()
+          .eq('message_id', messageId)
+          .eq('user_id', currentUserId);
+      } catch (e) {
+        console.warn('message_reactions delete notice:', e);
+      }
+
+      // 2. Query if other reactions remain on this message
+      let nextReaction = null;
+      try {
+        const { data: remaining } = await supabase
+          .from('message_reactions')
+          .select('emoji')
+          .eq('message_id', messageId)
+          .limit(1);
+
+        if (remaining && remaining[0]) {
+          nextReaction = remaining[0].emoji;
+        }
+
+        await supabase
+          .from('messages')
+          .update({ reaction: nextReaction })
+          .eq('id', messageId);
+      } catch (e) {}
+
+      // 3. Broadcast live reaction removal event
+      if (globalRealtimeChannel) {
+        globalRealtimeChannel.send({
+          type: 'broadcast',
+          event: 'message_reaction_removed',
+          payload: { messageId, conversationId, reaction: nextReaction, userId: currentUserId, emoji },
+        });
+      }
+
+      return nextReaction;
+    } catch (e) {
+      console.warn('deleteMessageReaction exception:', e);
+      return null;
+    }
+  },
+
+  /**
+   * Toggle reaction: updates if new emoji, or removes if same emoji.
+   */
+  async toggleMessageReaction({ messageId, conversationId, currentUserId, emoji }) {
+    return this.addOrUpdateMessageReaction({ messageId, conversationId, currentUserId, emoji });
   },
 
   /**
@@ -1173,6 +1297,7 @@ export const chatService = {
     onStatusCommentReceived,
     onMessagesRead,
     onMessageReaction,
+    onMessageReactionRemoved,
     onUserStatusUpdated,
   }) {
     if (!currentUser) return () => {};
@@ -1338,6 +1463,13 @@ export const chatService = {
           onMessageReaction(payload);
         }
       })
+      // Live Emoji Reaction Removed Broadcast
+      .on('broadcast', { event: 'message_reaction_removed' }, ({ payload }) => {
+        if (!payload) return;
+        if (typeof onMessageReactionRemoved === 'function') {
+          onMessageReactionRemoved(payload);
+        }
+      })
       // Live User Status Emoji & Text Broadcast
       .on('broadcast', { event: 'user_status_updated' }, ({ payload }) => {
         if (!payload) return;
@@ -1457,6 +1589,211 @@ export const chatService = {
       } catch (err) {
         console.warn('Broadcast status comment notice:', err);
       }
+    }
+  },
+
+  /**
+   * Posts a status update to public.statuses with server timestamp and 24-hour expiration.
+   */
+  async postStatus({
+    userId,
+    content,
+    type = 'image',
+    url,
+    text,
+    background,
+    caption,
+    emoji = '🌸',
+    createdAt,
+    expiresAt,
+  }) {
+    if (!userId) return null;
+    const now = new Date();
+    const isoCreated = createdAt || now.toISOString();
+    const isoExpires = expiresAt || new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+    try {
+      const row = {
+        user_id: userId,
+        content: content || url || text || '',
+        type: type || 'image',
+        url: url || null,
+        text: text || null,
+        background: background || null,
+        caption: caption || null,
+        emoji: emoji || '🌸',
+        created_at: isoCreated,
+        expires_at: isoExpires,
+      };
+      const { data, error } = await supabase
+        .from('statuses')
+        .insert([row])
+        .select();
+
+      if (error) {
+        console.warn('postStatus DB notice:', error.message);
+        return null;
+      }
+      return data && data[0] ? data[0] : null;
+    } catch (e) {
+      console.warn('postStatus exception:', e);
+      return null;
+    }
+  },
+
+  /**
+   * Records a user's view on another person's status.
+   * Prevents owner's view from counting and prevents duplicate view records via UNIQUE(status_id, viewer_id).
+   * Preserves first view time.
+   */
+  async recordStatusView({ statusId, viewerId, statusOwnerId, viewedAt }) {
+    if (!statusId || !viewerId) return null;
+    // Security check: Never count owner's own status as a view
+    if (statusOwnerId && String(viewerId) === String(statusOwnerId)) {
+      return null;
+    }
+
+    const nowIso = viewedAt || new Date().toISOString();
+    try {
+      const { data, error } = await supabase
+        .from('status_views')
+        .upsert(
+          {
+            status_id: statusId,
+            viewer_id: viewerId,
+            viewed_at: nowIso,
+          },
+          { onConflict: 'status_id,viewer_id', ignoreDuplicates: true }
+        )
+        .select();
+
+      if (error) {
+        console.warn('recordStatusView DB notice:', error.message);
+        return null;
+      }
+      return data && data[0] ? data[0] : null;
+    } catch (e) {
+      console.warn('recordStatusView exception:', e);
+      return null;
+    }
+  },
+
+  /**
+   * Fetches the viewers list for a status.
+   * Only the status owner can view the full viewers list.
+   */
+  async fetchStatusViewers(statusId, currentUserId, statusOwnerId) {
+    if (!statusId) return [];
+    // Only status owner is authorized to view all viewers
+    if (currentUserId && statusOwnerId && String(currentUserId) !== String(statusOwnerId)) {
+      return [];
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('status_views')
+        .select(`
+          id,
+          status_id,
+          viewer_id,
+          viewed_at,
+          profiles:viewer_id (
+            id,
+            name,
+            username,
+            email,
+            avatar_url
+          )
+        `)
+        .eq('status_id', statusId)
+        .order('viewed_at', { ascending: false });
+
+      if (error) {
+        console.warn('fetchStatusViewers DB notice:', error.message);
+        return [];
+      }
+
+      return (data || []).map((v) => ({
+        id: v.id,
+        userId: v.viewer_id,
+        name: v.profiles?.name || v.profiles?.username || 'Viewer',
+        username: v.profiles?.username || v.profiles?.name || 'user',
+        avatar: v.profiles?.avatar_url || '',
+        viewedAt: v.viewed_at ? new Date(v.viewed_at).getTime() : Date.now(),
+        timestamp: v.viewed_at ? new Date(v.viewed_at).getTime() : Date.now(),
+        time: v.viewed_at || new Date().toISOString(),
+      }));
+    } catch (e) {
+      console.warn('fetchStatusViewers exception:', e);
+      return [];
+    }
+  },
+
+  /**
+   * Fetches active non-expired statuses from database.
+   */
+  async fetchActiveStatuses() {
+    try {
+      const nowIso = new Date().toISOString();
+      const { data, error } = await supabase
+        .from('statuses')
+        .select(`
+          id,
+          user_id,
+          content,
+          type,
+          url,
+          text,
+          background,
+          caption,
+          emoji,
+          created_at,
+          expires_at,
+          profiles:user_id (
+            id,
+            name,
+            username,
+            email,
+            avatar_url
+          )
+        `)
+        .gt('expires_at', nowIso)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('fetchActiveStatuses DB notice:', error.message);
+        return [];
+      }
+
+      return (data || []).map((row) => ({
+        id: row.id,
+        userId: row.user_id,
+        userName: row.profiles?.name || row.profiles?.username || 'User',
+        userAvatar: row.profiles?.avatar_url || '',
+        userEmail: row.profiles?.email || '',
+        created_at: row.created_at,
+        expires_at: row.expires_at,
+        timestamp: new Date(row.created_at).getTime(),
+        stories: [
+          {
+            id: row.id,
+            type: row.type || 'image',
+            url: row.url || row.content,
+            text: row.text || row.content,
+            caption: row.caption,
+            background: row.background,
+            createdAt: row.created_at,
+            expiresAt: row.expires_at,
+            timestamp: new Date(row.created_at).getTime(),
+            viewers: [],
+            likes: [],
+            comments: [],
+          },
+        ],
+      }));
+    } catch (e) {
+      console.warn('fetchActiveStatuses exception:', e);
+      return [];
     }
   },
 
