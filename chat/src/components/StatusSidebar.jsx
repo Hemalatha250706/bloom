@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { Plus, Camera, ChevronDown, ChevronRight, Eye, Sparkles } from 'lucide-react';
-import { formatStatusTime } from '../services/chatService.js';
+import { formatStatusTime, formatViewedTime } from '../services/chatService.js';
 
 export default function StatusSidebar({
   currentUser,
   myStatuses = [],
   contactStatuses = [],
   viewedStatusIds = [],
+  viewedStatusMap = {},
   onOpenMyStatus,
   onCreateStatus,
   onOpenContactStatus,
@@ -217,7 +218,7 @@ export default function StatusSidebar({
                           {st.userName}
                         </h4>
                         <span className="text-[10px] text-stone-400 font-medium ml-1">
-                          {formatStatusTime(st.timestamp || st.stories?.[0]?.createdAt || st.stories?.[0]?.timestamp)}
+                          Viewed {formatViewedTime(viewedStatusMap?.[st.id] || st.viewedAt || st.timestamp)}
                         </span>
                       </div>
                       <p className="text-[11px] text-stone-400 truncate mt-0.5">

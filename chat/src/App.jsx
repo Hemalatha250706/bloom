@@ -170,14 +170,47 @@ export default function App() {
     }
   });
 
-  // Reload user's saved statuses when currentUser changes
+  // Reload user's saved statuses and viewed status map when currentUser changes
   useEffect(() => {
     if (currentUser?.email) {
       const loaded = chatService.getMyStatusesFromCache(currentUser.email);
       if (loaded) setMyStatuses(loaded);
     }
-  }, [currentUser?.email]);
-  const [viewedStatusIds, setViewedStatusIds] = useState([]);
+    if (currentUser?.id || currentUser?.email) {
+      const userKey = currentUser.id || currentUser.email;
+      try {
+        const stored = localStorage.getItem(`bloom_viewed_status_map_${userKey}`) || localStorage.getItem('bloom_viewed_status_map');
+        if (stored) {
+          setViewedStatusMap(JSON.parse(stored));
+        }
+      } catch (e) {}
+    }
+  }, [currentUser?.email, currentUser?.id]);
+
+  const [viewedStatusMap, setViewedStatusMap] = useState(() => {
+    try {
+      const stored = localStorage.getItem('bloom_viewed_status_map');
+      return stored ? JSON.parse(stored) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+  const viewedStatusIds = Object.keys(viewedStatusMap);
+
+  const markStatusAsViewed = (statusId) => {
+    if (!statusId) return;
+    const now = Date.now();
+    setViewedStatusMap((prev) => {
+      const updated = { ...prev, [statusId]: now };
+      const userKey = currentUser?.id || currentUser?.email || 'default';
+      try {
+        localStorage.setItem(`bloom_viewed_status_map_${userKey}`, JSON.stringify(updated));
+        localStorage.setItem('bloom_viewed_status_map', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+  };
+
   const [viewingStatus, setViewingStatus] = useState(null);
   const [isCreateStatusOpen, setIsCreateStatusOpen] = useState(false);
   const [isLiveCameraOpen, setIsLiveCameraOpen] = useState(false);
@@ -534,27 +567,66 @@ export default function App() {
         });
       },
       onStatusViewReceived: ({ statusId, storyId, viewer }) => {
+        const viewTimestamp =
+          viewer.timestamp ||
+          viewer.viewedAt ||
+          (viewer.time && viewer.time !== 'Just now' ? new Date(viewer.time).getTime() : Date.now());
+        const normalizedViewer = {
+          ...viewer,
+          timestamp: viewTimestamp,
+          viewedAt: viewTimestamp,
+          time: viewer.time && viewer.time !== 'Just now' ? viewer.time : new Date(viewTimestamp).toISOString(),
+        };
+
         setMyStatuses((prev) => {
           const updated = prev.map((st) => {
-            const updatedStories = st.stories.map((story) => {
-              if (!storyId || story.id === storyId) {
-                const currentViewers = story.viewers || [];
-                const already = currentViewers.some(
-                  (v) => v.email?.toLowerCase() === viewer.email?.toLowerCase()
-                );
-                if (!already) {
-                  return {
-                    ...story,
-                    viewers: [viewer, ...currentViewers],
-                  };
+            if (!statusId || st.id === statusId) {
+              const updatedStories = st.stories.map((story) => {
+                if (!storyId || story.id === storyId) {
+                  const currentViewers = story.viewers || [];
+                  const already = currentViewers.some(
+                    (v) =>
+                      (v.email && v.email?.toLowerCase() === normalizedViewer.email?.toLowerCase()) ||
+                      (v.id && v.id === normalizedViewer.id)
+                  );
+                  if (!already) {
+                    return {
+                      ...story,
+                      viewers: [normalizedViewer, ...currentViewers],
+                    };
+                  }
                 }
-              }
-              return story;
-            });
-            return { ...st, stories: updatedStories };
+                return story;
+              });
+              return { ...st, stories: updatedStories };
+            }
+            return st;
           });
           chatService.saveMyStatusesToCache(currentUser.email, updated);
           return updated;
+        });
+
+        // Live update if viewing own status currently
+        setViewingStatus((curr) => {
+          if (!curr || (statusId && curr.id !== statusId)) return curr;
+          const updatedStories = (curr.stories || []).map((story) => {
+            if (!storyId || story.id === storyId) {
+              const currentViewers = story.viewers || [];
+              const already = currentViewers.some(
+                (v) =>
+                  (v.email && v.email?.toLowerCase() === normalizedViewer.email?.toLowerCase()) ||
+                  (v.id && v.id === normalizedViewer.id)
+              );
+              if (!already) {
+                return {
+                  ...story,
+                  viewers: [normalizedViewer, ...currentViewers],
+                };
+              }
+            }
+            return story;
+          });
+          return { ...curr, stories: updatedStories };
         });
       },
       onStatusLikeReceived: ({ statusId, storyId, liker }) => {
@@ -1424,8 +1496,8 @@ export default function App() {
       likes: storyItem.likes || [],
       comments: storyItem.comments || [],
       likesCount: (storyItem.likes || []).length,
-      createdAt: storyItem.createdAt || isoString,
-      timestamp: storyItem.timestamp || now,
+      createdAt: storyItem.createdAt && storyItem.createdAt !== 'Just now' ? storyItem.createdAt : isoString,
+      timestamp: typeof storyItem.timestamp === 'number' ? storyItem.timestamp : now,
     };
     const existingStories = myStatuses[0]?.stories || [];
     const statusId = `status-me-${now}`;
@@ -1663,6 +1735,10 @@ export default function App() {
   // Record viewing a story in real-time
   const handleViewStory = (statusId, storyId) => {
     if (!currentUser?.email) return;
+    const viewNow = Date.now();
+    if (statusId) {
+      markStatusAsViewed(statusId);
+    }
     chatService.broadcastStatusView({
       statusId,
       storyId,
@@ -1671,19 +1747,23 @@ export default function App() {
         email: currentUser.email,
         name: currentUser.name,
         avatar: currentUser.avatar || '',
-        time: 'Just now',
+        timestamp: viewNow,
+        viewedAt: viewNow,
+        time: new Date(viewNow).toISOString(),
       },
     });
   };
 
   // Photo captured from camera directly for Status
   const handleCaptureForStatus = (imgUrl) => {
+    const now = Date.now();
     handlePostNewStatus({
-      id: `story-${Date.now()}`,
+      id: `story-${now}`,
       type: 'image',
       url: imgUrl,
       caption: 'Captured with Bloom Camera 🌸',
-      createdAt: 'Just now',
+      createdAt: new Date(now).toISOString(),
+      timestamp: now,
     });
   };
 
@@ -1742,13 +1822,12 @@ export default function App() {
                 myStatuses={myStatuses}
                 contactStatuses={contactStatuses}
                 viewedStatusIds={viewedStatusIds}
+                viewedStatusMap={viewedStatusMap}
                 onOpenMyStatus={() => myStatuses[0] && setViewingStatus(myStatuses[0])}
                 onCreateStatus={() => setIsCreateStatusOpen(true)}
                 onOpenContactStatus={(st) => {
                   setViewingStatus(st);
-                  if (!viewedStatusIds.includes(st.id)) {
-                    setViewedStatusIds((prev) => [...prev, st.id]);
-                  }
+                  markStatusAsViewed(st.id);
                 }}
                 onOpenLiveCamera={() => setIsLiveCameraOpen(true)}
               />

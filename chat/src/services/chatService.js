@@ -59,8 +59,22 @@ export function formatDateLabel(dateObj) {
  */
 export function formatStatusTime(timeVal) {
   if (!timeVal) return 'Just now';
-  const d = typeof timeVal === 'number' ? new Date(timeVal) : new Date(timeVal);
-  if (isNaN(d.getTime())) return String(timeVal);
+
+  let d;
+  if (typeof timeVal === 'number') {
+    d = new Date(timeVal);
+  } else if (typeof timeVal === 'string') {
+    const digitsMatch = timeVal.match(/\d{13}/);
+    if (digitsMatch) {
+      d = new Date(parseInt(digitsMatch[0], 10));
+    } else {
+      d = new Date(timeVal);
+    }
+  }
+
+  if (!d || isNaN(d.getTime())) {
+    return timeVal === 'Just now' ? 'Just now' : String(timeVal);
+  }
 
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
@@ -73,6 +87,50 @@ export function formatStatusTime(timeVal) {
   const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   if (d.toDateString() === now.toDateString()) {
+    return `Today at ${timeStr}`;
+  }
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) {
+    return `Yesterday at ${timeStr}`;
+  }
+
+  const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return `${dateStr} at ${timeStr}`;
+}
+
+/**
+ * Formats the time a status was viewed by user (e.g. 'Today at 11:45 AM', 'at 11:45 AM (15m ago)')
+ */
+export function formatViewedTime(viewedVal) {
+  if (!viewedVal) return 'Recently';
+
+  let d;
+  if (typeof viewedVal === 'number') {
+    d = new Date(viewedVal);
+  } else if (typeof viewedVal === 'string') {
+    if (viewedVal === 'Just now' || viewedVal === 'Recently') {
+      return 'Recently';
+    }
+    const digitsMatch = viewedVal.match(/\d{13}/);
+    if (digitsMatch) {
+      d = new Date(parseInt(digitsMatch[0], 10));
+    } else {
+      d = new Date(viewedVal);
+    }
+  }
+
+  if (!d || isNaN(d.getTime())) return 'Recently';
+
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  if (d.toDateString() === now.toDateString()) {
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    if (diffMins < 1) return `at ${timeStr} (Just now)`;
+    if (diffMins < 60) return `at ${timeStr} (${diffMins}m ago)`;
     return `Today at ${timeStr}`;
   }
 

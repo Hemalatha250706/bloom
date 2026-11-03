@@ -9,7 +9,7 @@ import {
   MessageSquare,
   Sparkles,
 } from 'lucide-react';
-import { formatStatusTime } from '../services/chatService.js';
+import { formatStatusTime, formatViewedTime } from '../services/chatService.js';
 
 export default function StatusViewerModal({
   statusData,
@@ -167,7 +167,12 @@ export default function StatusViewerModal({
     setTimeout(() => setToastMessage(''), 2200);
   };
 
-  const storyTimestamp = currentStory.createdAt || currentStory.timestamp || statusData.timestamp;
+  const storyTimestamp =
+    currentStory.createdAt ||
+    currentStory.timestamp ||
+    (currentStory.id && currentStory.id.match(/\d{13}/)?.[0] ? parseInt(currentStory.id.match(/\d{13}/)[0], 10) : null) ||
+    statusData.timestamp ||
+    (statusData.id && statusData.id.match(/\d{13}/)?.[0] ? parseInt(statusData.id.match(/\d{13}/)[0], 10) : null);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
@@ -506,7 +511,9 @@ export default function StatusViewerModal({
                         )}
                         <div>
                           <p className="text-xs font-bold text-white">{v.name}</p>
-                          <p className="text-[10px] text-stone-400">{formatStatusTime(v.time || v.timestamp)}</p>
+                          <p className="text-[10px] text-stone-400">
+                            {formatViewedTime(v.viewedAt || v.timestamp || (v.time && v.time !== 'Just now' ? v.time : null))}
+                          </p>
                         </div>
                       </div>
                       <span className="text-[10px] text-violet-400 font-semibold px-2 py-0.5 rounded-full bg-violet-950/60 border border-violet-800/40">
