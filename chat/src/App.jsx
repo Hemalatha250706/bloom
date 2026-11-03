@@ -107,8 +107,13 @@ export default function App() {
       const savedSession = localStorage.getItem('bloom_auth_session');
       const user = savedSession ? JSON.parse(savedSession)?.user : null;
       const userId = user?.id;
-      if (!userId || userId === 'current_user') return [];
-      const cached = chatService.getConversationsFromCache(userId);
+      const userHandle = (user?.username || user?.userId || '').toLowerCase().trim().replace(/^@/, '');
+      if (!userId && !userHandle) return [];
+
+      const cached =
+        (userId && chatService.getConversationsFromCache(userId)) ||
+        (userHandle && chatService.getConversationsFromCache(userHandle)) ||
+        [];
 
       if (cached && cached.length > 0) {
         return cached.map((c) => ({
@@ -117,7 +122,9 @@ export default function App() {
             ...c.user,
             status: 'offline', // Default offline until verified live
           },
-          messages: chatService.getMessagesFromCache(c.id) || [],
+          messages: (c.messages && c.messages.length > 0)
+            ? c.messages
+            : (chatService.getMessagesFromCache(c.id) || []),
         }));
       }
     } catch (e) {
@@ -131,8 +138,13 @@ export default function App() {
       const savedSession = localStorage.getItem('bloom_auth_session');
       const user = savedSession ? JSON.parse(savedSession)?.user : null;
       const userId = user?.id;
-      if (!userId || userId === 'current_user') return null;
-      const cached = chatService.getConversationsFromCache(userId);
+      const userHandle = (user?.username || user?.userId || '').toLowerCase().trim().replace(/^@/, '');
+      if (!userId && !userHandle) return null;
+
+      const cached =
+        (userId && chatService.getConversationsFromCache(userId)) ||
+        (userHandle && chatService.getConversationsFromCache(userHandle)) ||
+        [];
       if (cached && cached[0]?.id) return cached[0].id;
     } catch (e) {}
     return null;
@@ -183,29 +195,88 @@ export default function App() {
     }
   }, []);
 
-  // Central function to load user-specific conversations from Supabase
-  const loadUserConversations = async (userId) => {
+  // Helper to persist conversations both by Supabase User ID and by Username/Handle
+  const persistUserConversations = (
+    conversationsList,
+    userId = currentUser?.id,
+    userHandle = currentUser?.username || currentUser?.userId
+  ) => {
+    if (!conversationsList) return;
+    if (userId) {
+      chatService.saveConversationsToCache(userId, conversationsList);
+    }
+    if (userHandle) {
+      const clean = String(userHandle).toLowerCase().trim().replace(/^@/, '');
+      if (clean && clean !== userId) {
+        chatService.saveConversationsToCache(clean, conversationsList);
+      }
+    }
+  };
+
+  // Central function to load user-specific conversations from Supabase and cache
+  const loadUserConversations = async (userId, userHandle) => {
     if (!userId || userId === 'current_user') return;
+    const cleanHandle = String(userHandle || currentUser?.username || currentUser?.userId || '')
+      .toLowerCase()
+      .trim()
+      .replace(/^@/, '');
+
+    // 1. Immediately hydrate from local cache so conversations are immediately visible
+    const cachedByUid = chatService.getConversationsFromCache(userId);
+    const cachedByHandle = cleanHandle ? chatService.getConversationsFromCache(cleanHandle) : [];
+    const cachedConvs = (cachedByUid && cachedByUid.length > 0) ? cachedByUid : cachedByHandle;
+
+    if (cachedConvs && cachedConvs.length > 0) {
+      const hydratedCached = cachedConvs.map((c) => ({
+        ...c,
+        messages:
+          c.messages && c.messages.length > 0
+            ? c.messages
+            : chatService.getMessagesFromCache(c.id) || [],
+      }));
+      setConversations(hydratedCached);
+      if (!activeConversationIdRef.current && hydratedCached[0]?.id) {
+        setActiveConversationId(hydratedCached[0].id);
+      }
+    }
+
     try {
       const remoteConvs = await chatService.fetchUserConversations(userId);
-      if (Array.isArray(remoteConvs)) {
-        // Exclusively user's own conversations - NEVER merge with previous user's contacts
-        setConversations(remoteConvs);
-        chatService.saveConversationsToCache(userId, remoteConvs);
+      if (Array.isArray(remoteConvs) && remoteConvs.length > 0) {
+        // Hydrate messages for each conversation, merging with local cached messages
+        const mergedConvs = remoteConvs.map((rc) => {
+          const localMatch = (cachedConvs || []).find((lc) => lc.id === rc.id);
+          const cachedMsgs = chatService.getMessagesFromCache(rc.id) || [];
+          const remoteMsgs = rc.messages || [];
+          const msgMap = new Map();
+          cachedMsgs.forEach((m) => msgMap.set(m.id, m));
+          (localMatch?.messages || []).forEach((m) => msgMap.set(m.id, m));
+          remoteMsgs.forEach((m) => msgMap.set(m.id, m));
+          const allMsgs = Array.from(msgMap.values()).sort(
+            (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)
+          );
+          return {
+            ...rc,
+            messages: allMsgs.length > 0 ? allMsgs : remoteMsgs,
+          };
+        });
 
-        if (remoteConvs.length > 0) {
+        setConversations(mergedConvs);
+        persistUserConversations(mergedConvs, userId, cleanHandle);
+
+        if (mergedConvs.length > 0) {
           setActiveConversationId((curr) => {
-            const stillExists = remoteConvs.some((c) => c.id === curr);
-            return stillExists ? curr : remoteConvs[0].id;
+            const stillExists = mergedConvs.some((c) => c.id === curr);
+            return stillExists ? curr : mergedConvs[0].id;
           });
-        } else {
-          setActiveConversationId(null);
         }
+      } else if (cachedConvs && cachedConvs.length > 0) {
+        // If remote returned [] (e.g. table not populated or network offline),
+        // PRESERVE the cached conversations! DO NOT overwrite with []!
+        persistUserConversations(cachedConvs, userId, cleanHandle);
       }
     } catch (err) {
       console.warn('loadUserConversations error:', err);
-      const cached = chatService.getConversationsFromCache(userId);
-      setConversations(cached || []);
     }
   };
 
@@ -274,7 +345,7 @@ export default function App() {
       } catch (e) {}
 
       // Load conversations exclusively for this user
-      await loadUserConversations(authUser.id);
+      await loadUserConversations(authUser.id, cleanUsername);
     } catch (e) {
       console.warn('syncUserProfileAndConversations notice:', e);
     }
@@ -405,7 +476,7 @@ export default function App() {
           }
 
           chatService.saveMessagesToCache(targetConv.id, targetConv.messages);
-          chatService.saveConversationsToCache(currentUser.id, updatedList);
+          persistUserConversations(updatedList);
           return updatedList;
         });
       },
@@ -680,7 +751,7 @@ export default function App() {
         }
         return conv;
       });
-      chatService.saveConversationsToCache(currentUser.id, updated);
+      persistUserConversations(updated);
       return updated;
     });
   };
@@ -740,7 +811,7 @@ export default function App() {
         }
         return conv;
       });
-      chatService.saveConversationsToCache(currentUser.id, updated);
+      persistUserConversations(updated);
       return updated;
     });
 
@@ -770,7 +841,7 @@ export default function App() {
             }
             return conv;
           });
-          chatService.saveConversationsToCache(currentUser.id, updated);
+          persistUserConversations(updated);
           return updated;
         });
       }
@@ -862,7 +933,7 @@ export default function App() {
           (c.user?.email || '').toLowerCase().trim() !== targetEmail
       );
       const updated = [newConv, ...filtered];
-      chatService.saveConversationsToCache(currentUser.id, updated);
+      persistUserConversations(updated);
       return updated;
     });
 
@@ -880,7 +951,7 @@ export default function App() {
             }
             return c;
           });
-          chatService.saveConversationsToCache(currentUser.id, updated);
+          persistUserConversations(updated);
           return updated;
         });
       }
@@ -899,7 +970,7 @@ export default function App() {
         }
         return c;
       });
-      chatService.saveConversationsToCache(currentUser.id, updated);
+      persistUserConversations(updated);
       return updated;
     });
 
@@ -921,7 +992,7 @@ export default function App() {
 
     setConversations((prev) => {
       const updated = prev.filter((c) => c.id !== convId);
-      chatService.saveConversationsToCache(currentUser.id, updated);
+      persistUserConversations(updated);
       return updated;
     });
 
@@ -988,7 +1059,7 @@ export default function App() {
         }
         return conv;
       });
-      chatService.saveConversationsToCache(currentUser.id, updated);
+      persistUserConversations(updated);
       return updated;
     });
   };
@@ -1005,7 +1076,7 @@ export default function App() {
         }
         return conv;
       });
-      chatService.saveConversationsToCache(currentUser.id, updated);
+      persistUserConversations(updated);
       return updated;
     });
   };
@@ -1024,7 +1095,7 @@ export default function App() {
         }
         return conv;
       });
-      chatService.saveConversationsToCache(currentUser.id, updated);
+      persistUserConversations(updated);
       return updated;
     });
   };

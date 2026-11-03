@@ -36,6 +36,9 @@ UPDATE public.profiles SET username = LOWER(name) WHERE username IS NULL AND nam
 -- Enforce case-insensitive unique username constraint
 CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_username_lower ON public.profiles (LOWER(username));
 
+-- Enforce 1 Email = 1 Unique Username constraint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_email_unique ON public.profiles (LOWER(email));
+
 -- Index on email and username for fast search
 CREATE INDEX IF NOT EXISTS idx_profiles_email ON public.profiles(email);
 CREATE INDEX IF NOT EXISTS idx_profiles_username ON public.profiles(username);

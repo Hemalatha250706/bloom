@@ -29,6 +29,54 @@ export const authService = {
     return { available: true };
   },
 
+  // Check if an email already has a registered username (Strict 1 Email = 1 Username rule)
+  async checkEmailAvailability(email) {
+    const clean = (email || '').toLowerCase().trim();
+    if (!clean) return { available: false, error: 'Email is required.' };
+
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, username, email')
+        .eq('email', clean)
+        .limit(1);
+
+      if (!error && data && data.length > 0) {
+        const assignedUsername = data[0].username || data[0].name;
+        return {
+          available: false,
+          existingUsername: assignedUsername,
+          error: `This email is already registered with username "@${assignedUsername}". Each email can only have one username. Please sign in instead.`,
+        };
+      }
+    } catch (err) {
+      console.warn('checkEmailAvailability notice:', err);
+    }
+
+    return { available: true };
+  },
+
+  // Lookup email address associated with a username (for User ID login)
+  async lookupEmailByUsername(username) {
+    const clean = (username || '').toLowerCase().trim().replace(/^@/, '');
+    if (!clean) return null;
+
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('email, username')
+        .or(`username.ilike.${clean},name.ilike.${clean}`)
+        .limit(1);
+
+      if (!error && data && data.length > 0 && data[0].email) {
+        return data[0].email.toLowerCase().trim();
+      }
+    } catch (err) {
+      console.warn('lookupEmailByUsername notice:', err);
+    }
+    return null;
+  },
+
   // Sign up with email & password
   async signUp(email, password, metadata = {}) {
     const { data, error } = await supabase.auth.signUp({

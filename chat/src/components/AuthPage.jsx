@@ -180,12 +180,30 @@ export default function AuthPage({ onLoginSuccess }) {
     if (!cleanEmail.includes('@')) {
       try {
         const dir = JSON.parse(localStorage.getItem('bloom_user_directory') || '{}');
+        const emailDir = JSON.parse(localStorage.getItem('bloom_email_directory') || '{}');
         if (dir[cleanEmail]) {
           cleanEmail = dir[cleanEmail];
         } else {
-          cleanEmail = `${cleanEmail}@bloom.chat`;
+          const allReg = JSON.parse(localStorage.getItem('bloom_registered_users') || '[]');
+          const match = allReg.find((u) => (u.username || u.userId || u.name)?.toLowerCase() === cleanEmail);
+          if (match && match.email) {
+            cleanEmail = match.email;
+          }
         }
-      } catch (e) {
+      } catch (e) {}
+
+      // If still not resolved, query remote database
+      if (!cleanEmail.includes('@')) {
+        try {
+          const remoteEmail = await authService.lookupEmailByUsername(cleanEmail);
+          if (remoteEmail) {
+            cleanEmail = remoteEmail;
+          }
+        } catch (e) {}
+      }
+
+      // Fallback
+      if (!cleanEmail.includes('@')) {
         cleanEmail = `${cleanEmail}@bloom.chat`;
       }
     }
@@ -196,13 +214,22 @@ export default function AuthPage({ onLoginSuccess }) {
       if (onLoginSuccess) {
         const userObj = data?.user || {};
         const meta = userObj.user_metadata || {};
-        const resolvedUserId = meta.userId || rawInput.replace(/@.*$/, '') || cleanEmail.split('@')[0];
+        const resolvedUserId = (
+          meta.username ||
+          meta.userId ||
+          rawInput.replace(/@.*$/, '') ||
+          cleanEmail.split('@')[0]
+        ).toLowerCase().trim().replace(/^@/, '');
 
         // Register into local directory & registered users cache
         try {
           const dir = JSON.parse(localStorage.getItem('bloom_user_directory') || '{}');
           dir[resolvedUserId] = cleanEmail;
           localStorage.setItem('bloom_user_directory', JSON.stringify(dir));
+
+          const emailDir = JSON.parse(localStorage.getItem('bloom_email_directory') || '{}');
+          emailDir[cleanEmail] = resolvedUserId;
+          localStorage.setItem('bloom_email_directory', JSON.stringify(emailDir));
 
           const allReg = JSON.parse(localStorage.getItem('bloom_registered_users') || '[]');
           const exists = allReg.some((u) => (u.username || u.name)?.toLowerCase() === resolvedUserId);
@@ -303,17 +330,47 @@ export default function AuthPage({ onLoginSuccess }) {
       console.warn('Username check notice:', e);
     }
 
-    // 2. Also check local directory to prevent duplicate local usernames
+    // 2. Enforce 1 Email = 1 Username rule (check database)
+    try {
+      const emailAvailability = await authService.checkEmailAvailability(cleanEmail);
+      if (!emailAvailability.available) {
+        setIsLoading(false);
+        setErrorMessage(
+          emailAvailability.error ||
+          `This email is already registered with username "@${emailAvailability.existingUsername}". Each email can only have one username. Please sign in instead.`
+        );
+        setEmail(cleanEmail);
+        return;
+      }
+    } catch (e) {
+      console.warn('Email check notice:', e);
+    }
+
+    // 3. Also check local directory to prevent duplicate usernames and multiple usernames per email
     try {
       const dir = JSON.parse(localStorage.getItem('bloom_user_directory') || '{}');
-      if (dir[cleanUsername] && dir[cleanUsername] !== cleanEmail) {
+      const emailDir = JSON.parse(localStorage.getItem('bloom_email_directory') || '{}');
+
+      // If email is already registered with a username, block creating a second username
+      const existingUserForEmail = emailDir[cleanEmail] || Object.keys(dir).find((u) => dir[u]?.toLowerCase() === cleanEmail);
+      if (existingUserForEmail && existingUserForEmail.toLowerCase() !== cleanUsername) {
         setIsLoading(false);
-        setErrorMessage(`Username "@${cleanUsername}" is already in use. Please choose another username.`);
+        setErrorMessage(
+          `This email is already registered with username "@${existingUserForEmail}". Each email ID can only have one username. Please sign in instead.`
+        );
+        setEmail(cleanEmail);
+        return;
+      }
+
+      // Check if username is already taken by another account
+      if (dir[cleanUsername] && dir[cleanUsername].toLowerCase() !== cleanEmail) {
+        setIsLoading(false);
+        setErrorMessage(`Username "@${cleanUsername}" is already taken. Please choose another username.`);
         return;
       }
     } catch (e) {}
 
-    // 3. Register with Supabase Auth
+    // 4. Register with Supabase Auth
     try {
       const data = await authService.signUp(cleanEmail, signupPassword, {
         name: cleanUsername,
@@ -326,7 +383,7 @@ export default function AuthPage({ onLoginSuccess }) {
       // data.user exists but identities array is empty []!
       if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
         setIsLoading(false);
-        setErrorMessage('This email is already registered. Please sign in instead.');
+        setErrorMessage('This email is already registered. Each email can only have one username. Please sign in instead.');
         setEmail(cleanEmail);
         return;
       }
@@ -336,6 +393,10 @@ export default function AuthPage({ onLoginSuccess }) {
         const dir = JSON.parse(localStorage.getItem('bloom_user_directory') || '{}');
         dir[cleanUsername] = cleanEmail;
         localStorage.setItem('bloom_user_directory', JSON.stringify(dir));
+
+        const emailDir = JSON.parse(localStorage.getItem('bloom_email_directory') || '{}');
+        emailDir[cleanEmail] = cleanUsername;
+        localStorage.setItem('bloom_email_directory', JSON.stringify(emailDir));
 
         const allReg = JSON.parse(localStorage.getItem('bloom_registered_users') || '[]');
         const exists = allReg.some((u) => (u.username || u.name)?.toLowerCase() === cleanUsername);

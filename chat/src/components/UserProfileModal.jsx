@@ -355,29 +355,25 @@ export default function UserProfileModal({
           ) : (
             /* Edit Mode: Set Username & Status Emoji + Text */
             <form onSubmit={handleSave} className="space-y-3.5 pt-1">
-              {/* Username */}
+              {/* Username (Permanent & tied 1-to-1 to registered email) */}
               <div>
-                <label className="block text-[11px] font-bold text-stone-700 uppercase tracking-wider mb-1">
-                  Username
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-bold text-stone-700 uppercase tracking-wider">
+                    Username
+                  </label>
+                  <span className="text-[10px] text-stone-400 font-medium">Permanent</span>
+                </div>
                 <div className="relative flex items-center">
                   <span className="text-violet-500 font-bold absolute left-3 select-none text-xs">@</span>
                   <input
                     type="text"
                     value={formData.userId}
-                    onChange={(e) => {
-                      const val = e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, '');
-                      setFormData({
-                        ...formData,
-                        userId: val,
-                        name: val,
-                      });
-                    }}
-                    placeholder="username"
-                    required
-                    className="w-full bg-stone-50 pl-7 pr-3 py-2 rounded-xl text-xs sm:text-sm text-stone-800 border border-stone-200 focus:outline-none focus:bg-white focus:border-violet-400 focus:ring-2 focus:ring-violet-200 font-medium"
+                    readOnly
+                    disabled
+                    className="w-full bg-stone-100/80 pl-7 pr-3 py-2 rounded-xl text-xs sm:text-sm text-stone-600 border border-stone-200 cursor-not-allowed font-medium select-none"
                   />
                 </div>
+                <p className="text-[10px] text-stone-400 mt-1">1 Email is uniquely tied to this 1 Username.</p>
               </div>
 
               {/* Status Emoji Selection */}
