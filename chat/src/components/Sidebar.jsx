@@ -61,25 +61,33 @@ export default function Sidebar({
 
   // Filter conversations based on search and active filter, with deduplication guarantee
   const filteredConversations = useMemo(() => {
-    // 1. Deduplicate conversations by other user's email or ID (no duplicate contacts)
+    // 1. Deduplicate conversations by other user's email, userId, or ID without losing any messages
     const uniqueMap = new Map();
     (conversations || []).forEach((conv) => {
       if (!conv || !conv.user) return;
-      const key = (conv.user.email || conv.user.id || conv.id).toLowerCase().trim();
+      const key = (conv.user.email || conv.user.userId || conv.user.id || conv.id).toLowerCase().trim();
       if (!uniqueMap.has(key)) {
         uniqueMap.set(key, conv);
       } else {
         const existing = uniqueMap.get(key);
-        // Prefer the one with latest message/activity
-        const convTime = conv.lastActivity || 0;
-        const existTime = existing.lastActivity || 0;
-        if (convTime >= existTime || (conv.messages?.length || 0) > (existing.messages?.length || 0)) {
-          uniqueMap.set(key, {
-            ...conv,
-            pinned: existing.pinned || conv.pinned,
-            unreadCount: Math.max(existing.unreadCount || 0, conv.unreadCount || 0),
-          });
-        }
+        // Merge messages from both to guarantee zero lost chats
+        const msgMap = new Map();
+        (existing.messages || []).forEach((m) => msgMap.set(m.id, m));
+        (conv.messages || []).forEach((m) => msgMap.set(m.id, m));
+        const mergedMsgs = Array.from(msgMap.values()).sort(
+          (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)
+        );
+        const latestTime = Math.max(conv.lastActivity || 0, existing.lastActivity || 0);
+
+        uniqueMap.set(key, {
+          ...existing,
+          ...conv,
+          id: existing.id || conv.id,
+          pinned: existing.pinned || conv.pinned,
+          unreadCount: Math.max(existing.unreadCount || 0, conv.unreadCount || 0),
+          lastActivity: latestTime,
+          messages: mergedMsgs,
+        });
       }
     });
 

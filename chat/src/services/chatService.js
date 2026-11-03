@@ -552,35 +552,30 @@ export const chatService = {
         }
       }
 
-      // Step C: No existing conversation found. Create a new conversation row.
-      const { data: newConv, error: newConvErr } = await supabase
-        .from('conversations')
-        .insert([{ type: 'direct', title: null }])
-        .select()
-        .single();
+      // Deterministic conversation ID derived consistently from the sorted pair of user IDs
+      const sortedPair = [String(currentUserId), String(otherUserId)].sort().join('__');
+      const deterministicConvId = stringToUuid(sortedPair);
 
-      if (newConvErr || !newConv) {
-        throw new Error(newConvErr?.message || 'Failed to create conversation');
-      }
-
-      const conversationId = newConv.id;
+      // Step C: Upsert conversation row using deterministic ID
+      try {
+        await supabase
+          .from('conversations')
+          .upsert([{ id: deterministicConvId, type: 'direct', title: null }], { onConflict: 'id' });
+      } catch (e) {}
 
       // Step D: Add both users to conversation_participants table
-      const { error: partErr } = await supabase
-        .from('conversation_participants')
-        .insert([
-          { conversation_id: conversationId, user_id: currentUserId, pinned: false, unread_count: 0 },
-          { conversation_id: conversationId, user_id: otherUserId, pinned: false, unread_count: 0 },
-        ]);
+      try {
+        await supabase
+          .from('conversation_participants')
+          .upsert([
+            { conversation_id: deterministicConvId, user_id: currentUserId, is_hidden: false },
+            { conversation_id: deterministicConvId, user_id: otherUserId, is_hidden: false },
+          ], { onConflict: 'conversation_id,user_id' });
+      } catch (e) {}
 
-      if (partErr) {
-        console.warn('Error inserting conversation participants:', partErr.message);
-      }
-
-      return conversationId;
+      return deterministicConvId;
     } catch (err) {
-      console.error('getOrCreateDirectConversation error:', err);
-      // Fallback deterministic UUID based on sorted user IDs
+      console.warn('getOrCreateDirectConversation notice:', err);
       const sortedPair = [String(currentUserId), String(otherUserId)].sort().join('__');
       return stringToUuid(sortedPair);
     }
@@ -831,8 +826,11 @@ export const chatService = {
     conversationId,
     senderId,
     recipientId = null,
+    recipientEmail = '',
+    recipientUsername = '',
     senderEmail,
     senderName,
+    senderUserId,
     text,
     attachment,
     status = 'sent',
@@ -850,8 +848,11 @@ export const chatService = {
       conversationId,
       senderId,
       recipientId: recipientId || null,
+      recipientEmail: recipientEmail || '',
+      recipientUsername: recipientUsername || '',
       senderEmail: senderEmail || '',
       senderName: senderName || '',
+      senderUserId: senderUserId || '',
       text: text || '',
       attachment: attachment || null,
       status, // starts as 'sent' (single grey tick)
@@ -864,16 +865,48 @@ export const chatService = {
     // Broadcast immediately so recipient UI gets it instantaneously
     await this.broadcastMessage(messagePayload);
 
-    // Save to Supabase Database
+    // Save to Supabase Database with foreign-key resilience
     try {
+      // 1. Ensure conversation row exists in Supabase
+      try {
+        await supabase
+          .from('conversations')
+          .upsert([{ id: conversationId, type: 'direct' }], { onConflict: 'id' });
+      } catch (e) {}
+
+      // 2. Ensure both participants are registered in conversation_participants
+      try {
+        if (senderId) {
+          await supabase
+            .from('conversation_participants')
+            .upsert(
+              [{ conversation_id: conversationId, user_id: senderId, unread_count: 0 }],
+              { onConflict: 'conversation_id,user_id' }
+            );
+        }
+        if (recipientId) {
+          await supabase
+            .from('conversation_participants')
+            .upsert(
+              [{ conversation_id: conversationId, user_id: recipientId }],
+              { onConflict: 'conversation_id,user_id' }
+            );
+        }
+      } catch (e) {}
+
+      // 3. Insert into messages table (supporting both 'text' and 'content' column names)
       const insertRow = {
         conversation_id: conversationId,
         sender_id: senderId,
         text: text || '',
+        content: text || '',
         attachment: attachment || null,
         status,
         reaction,
       };
+      if (recipientId) {
+        insertRow.receiver_id = recipientId;
+      }
 
       const { data, error } = await supabase
         .from('messages')
@@ -1109,14 +1142,27 @@ export const chatService = {
         if (!payload) return;
 
         // Skip if message was broadcast by myself (prevents duplicate self-messages)
+        const myHandle = (currentUser.username || currentUser.userId || '').toLowerCase().trim().replace(/^@/, '');
         const isSender =
-          (payload.senderId && payload.senderId.toLowerCase() === userUuid.toLowerCase()) ||
-          (payload.senderEmail && cleanEmail && payload.senderEmail.toLowerCase() === cleanEmail);
+          (payload.senderId && String(payload.senderId).toLowerCase() === userUuid.toLowerCase()) ||
+          (payload.senderEmail && cleanEmail && payload.senderEmail.toLowerCase().trim() === cleanEmail) ||
+          (payload.senderUserId && myHandle && payload.senderUserId.toLowerCase().trim().replace(/^@/, '') === myHandle);
 
         if (isSender) return;
 
-        // Skip if message has a specific recipient and it is not this user (prevents cross-user message leakage)
-        if (payload.recipientId && payload.recipientId.toLowerCase() !== userUuid.toLowerCase()) {
+        // Verify recipient matches this user (by Supabase Auth UUID, email UUID, email string, or username handle)
+        const recTargetId = payload.recipientId ? String(payload.recipientId).toLowerCase() : '';
+        const recEmail = payload.recipientEmail ? String(payload.recipientEmail).toLowerCase().trim() : '';
+        const recUser = payload.recipientUsername ? String(payload.recipientUsername).toLowerCase().trim().replace(/^@/, '') : '';
+
+        const isAddressedToMe =
+          !recTargetId && !recEmail && !recUser
+            ? true
+            : (recTargetId && (recTargetId === userUuid.toLowerCase() || recTargetId === emailUuid.toLowerCase())) ||
+              (recEmail && cleanEmail && recEmail === cleanEmail) ||
+              (recUser && myHandle && recUser === myHandle);
+
+        if (!isAddressedToMe) {
           return;
         }
 

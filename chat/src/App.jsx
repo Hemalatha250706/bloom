@@ -242,37 +242,64 @@ export default function App() {
 
     try {
       const remoteConvs = await chatService.fetchUserConversations(userId);
-      if (Array.isArray(remoteConvs) && remoteConvs.length > 0) {
-        // Hydrate messages for each conversation, merging with local cached messages
-        const mergedConvs = remoteConvs.map((rc) => {
-          const localMatch = (cachedConvs || []).find((lc) => lc.id === rc.id);
+      const isRemoteArray = Array.isArray(remoteConvs);
+
+      // Start with all cached conversations in a map so no local conversation is ever dropped
+      const convMap = new Map();
+      (cachedConvs || []).forEach((c) => {
+        if (!c || !c.user) return;
+        const key = (c.user.email || c.user.userId || c.user.id || c.id).toLowerCase().trim();
+        convMap.set(key, c);
+      });
+
+      // Merge in remote conversations safely
+      if (isRemoteArray && remoteConvs.length > 0) {
+        remoteConvs.forEach((rc) => {
+          if (!rc || !rc.user) return;
+          const key = (rc.user.email || rc.user.userId || rc.user.id || rc.id).toLowerCase().trim();
+          const local = convMap.get(key);
+
           const cachedMsgs = chatService.getMessagesFromCache(rc.id) || [];
+          const localMsgs = local?.messages || [];
           const remoteMsgs = rc.messages || [];
+
           const msgMap = new Map();
           cachedMsgs.forEach((m) => msgMap.set(m.id, m));
-          (localMatch?.messages || []).forEach((m) => msgMap.set(m.id, m));
+          localMsgs.forEach((m) => msgMap.set(m.id, m));
           remoteMsgs.forEach((m) => msgMap.set(m.id, m));
           const allMsgs = Array.from(msgMap.values()).sort(
             (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)
           );
-          return {
+
+          chatService.saveMessagesToCache(rc.id, allMsgs);
+          if (local?.id && local.id !== rc.id) {
+            chatService.saveMessagesToCache(local.id, allMsgs);
+          }
+
+          convMap.set(key, {
+            ...(local || {}),
             ...rc,
-            messages: allMsgs.length > 0 ? allMsgs : remoteMsgs,
-          };
-        });
-
-        setConversations(mergedConvs);
-        persistUserConversations(mergedConvs, userId, cleanHandle);
-
-        if (mergedConvs.length > 0) {
-          setActiveConversationId((curr) => {
-            const stillExists = mergedConvs.some((c) => c.id === curr);
-            return stillExists ? curr : mergedConvs[0].id;
+            messages: allMsgs,
+            lastActivity: Math.max(rc.lastActivity || 0, local?.lastActivity || 0),
           });
-        }
+        });
+      }
+
+      const mergedList = Array.from(convMap.values()).sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        return (b.lastActivity || 0) - (a.lastActivity || 0);
+      });
+
+      if (mergedList.length > 0) {
+        setConversations(mergedList);
+        persistUserConversations(mergedList, userId, cleanHandle);
+
+        setActiveConversationId((curr) => {
+          const stillExists = mergedList.some((c) => c.id === curr);
+          return stillExists ? curr : mergedList[0].id;
+        });
       } else if (cachedConvs && cachedConvs.length > 0) {
-        // If remote returned [] (e.g. table not populated or network offline),
-        // PRESERVE the cached conversations! DO NOT overwrite with []!
         persistUserConversations(cachedConvs, userId, cleanHandle);
       }
     } catch (err) {
@@ -426,11 +453,26 @@ export default function App() {
               presenceState
             );
 
+            // Hydrate with any previously cached messages for this conversation or contact
+            const cachedMsgs =
+              chatService.getMessagesFromCache(convId).length > 0
+                ? chatService.getMessagesFromCache(convId)
+                : otherId
+                ? chatService.getMessagesFromCache(otherId)
+                : [];
+            const msgMap = new Map();
+            cachedMsgs.forEach((m) => msgMap.set(m.id, m));
+            msgMap.set(incomingMsg.id, incomingMsg);
+            const allMsgs = Array.from(msgMap.values()).sort(
+              (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)
+            );
+
             targetConv = {
               id: convId,
               user: {
                 id: otherId || convId,
-                name: incomingMsg.senderName || contactEmail.split('@')[0] || 'Bloom Contact 🌸',
+                name: incomingMsg.senderName || incomingMsg.senderUserId || contactEmail.split('@')[0] || 'Bloom Contact 🌸',
+                userId: (incomingMsg.senderUserId || incomingMsg.senderName || contactEmail.split('@')[0] || 'user').replace(/^@/, ''),
                 email: contactEmail,
                 avatar: incomingMsg.senderAvatar || '',
                 status: isOnlineNow ? 'online' : 'offline',
@@ -440,7 +482,7 @@ export default function App() {
               pinned: false,
               pinnedMessageId: null,
               lastActivity: Date.now(),
-              messages: [incomingMsg],
+              messages: allMsgs,
             };
             updatedList = [targetConv, ...prev];
           } else {
@@ -737,11 +779,20 @@ export default function App() {
     setActiveConversationId(id);
     setShowMobileChat(true);
 
-    // Mark unread messages as read
+    // Mark unread messages as read AND ensure all cached messages are loaded into the conversation
     setConversations((prev) => {
       const updated = prev.map((conv) => {
-        if (conv.id === id && (conv.unreadCount > 0 || conv.messages.some((m) => m.status !== 'read'))) {
-          const updatedMsgs = conv.messages.map((m) => ({ ...m, status: 'read' }));
+        if (conv.id === id) {
+          const cachedMsgs = chatService.getMessagesFromCache(conv.id) || [];
+          const existingMsgs = conv.messages || [];
+          const msgMap = new Map();
+          cachedMsgs.forEach((m) => msgMap.set(m.id, m));
+          existingMsgs.forEach((m) => msgMap.set(m.id, m));
+          const allMsgs = Array.from(msgMap.values()).sort(
+            (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)
+          );
+
+          const updatedMsgs = allMsgs.map((m) => ({ ...m, status: 'read' }));
           chatService.saveMessagesToCache(conv.id, updatedMsgs);
           return {
             ...conv,
@@ -753,6 +804,26 @@ export default function App() {
       });
       persistUserConversations(updated);
       return updated;
+    });
+
+    // Also fetch messages from Supabase in the background and merge cleanly
+    chatService.fetchMessagesForConversation(id).then((remoteMsgs) => {
+      if (remoteMsgs && remoteMsgs.length > 0) {
+        setConversations((prev) => {
+          const target = prev.find((c) => c.id === id);
+          if (!target) return prev;
+          const msgMap = new Map();
+          (target.messages || []).forEach((m) => msgMap.set(m.id, m));
+          remoteMsgs.forEach((m) => msgMap.set(m.id, m));
+          const merged = Array.from(msgMap.values()).sort(
+            (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)
+          );
+          chatService.saveMessagesToCache(id, merged);
+          const updated = prev.map((c) => (c.id === id ? { ...c, messages: merged } : c));
+          persistUserConversations(updated);
+          return updated;
+        });
+      }
     });
   };
 
@@ -821,8 +892,11 @@ export default function App() {
         conversationId: activeConversationId,
         senderId: myId,
         recipientId,
+        recipientEmail: currentConv.user?.email || '',
+        recipientUsername: currentConv.user?.username || currentConv.user?.userId || '',
         senderEmail: myEmail,
         senderName: currentUser.name || myUsername || myEmail.split('@')[0],
+        senderUserId: myUsername,
         text: text || '',
         attachment,
         status: initialStatus,
@@ -882,8 +956,35 @@ export default function App() {
     });
 
     if (existing) {
+      // Ensure all messages are hydrated from cache
+      const cachedMsgs = chatService.getMessagesFromCache(existing.id) || [];
+      if (cachedMsgs.length > (existing.messages?.length || 0)) {
+        setConversations((prev) =>
+          prev.map((c) => (c.id === existing.id ? { ...c, messages: cachedMsgs } : c))
+        );
+      }
       setActiveConversationId(existing.id);
       setShowMobileChat(true);
+
+      // Background fetch remote messages and merge
+      chatService.fetchMessagesForConversation(existing.id).then((remoteMsgs) => {
+        if (remoteMsgs && remoteMsgs.length > 0) {
+          setConversations((prev) => {
+            const target = prev.find((c) => c.id === existing.id);
+            if (!target) return prev;
+            const msgMap = new Map();
+            (target.messages || []).forEach((m) => msgMap.set(m.id, m));
+            remoteMsgs.forEach((m) => msgMap.set(m.id, m));
+            const merged = Array.from(msgMap.values()).sort(
+              (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)
+            );
+            chatService.saveMessagesToCache(existing.id, merged);
+            const updated = prev.map((c) => (c.id === existing.id ? { ...c, messages: merged } : c));
+            persistUserConversations(updated);
+            return updated;
+          });
+        }
+      });
       return;
     }
 
@@ -907,30 +1008,58 @@ export default function App() {
       presenceState
     );
 
-    const newConv = {
-      id: convId,
-      user: {
-        id: targetUserId || convId,
-        name: contactData.name || contactData.userId || targetEmail.split('@')[0] || 'user',
-        userId: (contactData.userId || contactData.name || targetEmail.split('@')[0] || 'user').replace(/^@/, ''),
-        email: targetEmail,
-        avatar: contactData.avatar_url || contactData.avatar || '',
-        about: contactData.about || 'Available 🌸',
-        status: isOnlineNow ? 'online' : 'offline',
-      },
-      unreadCount: 0,
-      pinned: false,
-      pinnedMessageId: null,
-      lastActivity: Date.now(),
-      messages: chatService.getMessagesFromCache(convId) || [],
-    };
-
     setConversations((prev) => {
-      // Filter out any potential duplicates by email or user ID
+      // Find any prior conversation with this user by ID, email, or handle
+      const oldMatch = prev.find(
+        (c) =>
+          c.id === convId ||
+          (targetEmail && (c.user?.email || '').toLowerCase().trim() === targetEmail) ||
+          (targetUserId && (c.user?.id === targetUserId || c.id === targetUserId)) ||
+          (rawHandle && (c.user?.username || c.user?.userId || '').toLowerCase().trim().replace(/^@/, '') === rawHandle)
+      );
+
+      // Hydrate all cached messages across all possible keys
+      const cachedMsgs = [
+        ...(chatService.getMessagesFromCache(convId) || []),
+        ...(oldMatch?.id && oldMatch.id !== convId ? chatService.getMessagesFromCache(oldMatch.id) || [] : []),
+        ...(targetUserId ? chatService.getMessagesFromCache(targetUserId) || [] : []),
+      ];
+
+      const msgMap = new Map();
+      (oldMatch?.messages || []).forEach((m) => msgMap.set(m.id, m));
+      cachedMsgs.forEach((m) => msgMap.set(m.id, m));
+      const mergedMsgs = Array.from(msgMap.values()).sort(
+        (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)
+      );
+
+      const newConv = {
+        id: convId,
+        user: {
+          id: targetUserId || convId,
+          name: contactData.name || contactData.userId || targetEmail.split('@')[0] || 'user',
+          userId: (contactData.userId || contactData.name || targetEmail.split('@')[0] || 'user').replace(/^@/, ''),
+          email: targetEmail,
+          avatar: contactData.avatar_url || contactData.avatar || '',
+          about: contactData.about || 'Available 🌸',
+          status: isOnlineNow ? 'online' : 'offline',
+          ...(oldMatch?.user || {}),
+        },
+        unreadCount: oldMatch?.unreadCount || 0,
+        pinned: oldMatch?.pinned || false,
+        pinnedMessageId: oldMatch?.pinnedMessageId || null,
+        lastActivity: Math.max(oldMatch?.lastActivity || 0, Date.now()),
+        messages: mergedMsgs,
+      };
+
+      chatService.saveMessagesToCache(convId, mergedMsgs);
+
+      // Filter out any duplicates by email or user ID without losing chats
       const filtered = prev.filter(
         (c) =>
           c.id !== convId &&
-          (c.user?.email || '').toLowerCase().trim() !== targetEmail
+          (targetEmail ? (c.user?.email || '').toLowerCase().trim() !== targetEmail : true) &&
+          (targetUserId ? c.user?.id !== targetUserId && c.id !== targetUserId : true) &&
+          (rawHandle ? (c.user?.username || c.user?.userId || '').toLowerCase().trim().replace(/^@/, '') !== rawHandle : true)
       );
       const updated = [newConv, ...filtered];
       persistUserConversations(updated);
@@ -940,17 +1069,20 @@ export default function App() {
     setActiveConversationId(convId);
     setShowMobileChat(true);
 
-    // Fetch messages for new conversation
+    // Fetch messages for new conversation and safely merge
     chatService.fetchMessagesForConversation(convId).then((remoteMsgs) => {
       if (remoteMsgs && remoteMsgs.length > 0) {
         setConversations((prev) => {
-          const updated = prev.map((c) => {
-            if (c.id === convId) {
-              chatService.saveMessagesToCache(convId, remoteMsgs);
-              return { ...c, messages: remoteMsgs };
-            }
-            return c;
-          });
+          const target = prev.find((c) => c.id === convId);
+          if (!target) return prev;
+          const msgMap = new Map();
+          (target.messages || []).forEach((m) => msgMap.set(m.id, m));
+          remoteMsgs.forEach((m) => msgMap.set(m.id, m));
+          const merged = Array.from(msgMap.values()).sort(
+            (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)
+          );
+          chatService.saveMessagesToCache(convId, merged);
+          const updated = prev.map((c) => (c.id === convId ? { ...c, messages: merged } : c));
           persistUserConversations(updated);
           return updated;
         });
