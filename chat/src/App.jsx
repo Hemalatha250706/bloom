@@ -421,6 +421,7 @@ export default function App() {
                 user: {
                   ...conv.user,
                   status: liveStatus,
+                  last_seen: isOnline ? new Date().toISOString() : (conv.user.last_seen || new Date().toISOString()),
                 },
               };
             }
@@ -554,6 +555,138 @@ export default function App() {
           });
           chatService.saveMyStatusesToCache(currentUser.email, updated);
           return updated;
+        });
+      },
+      onStatusLikeReceived: ({ statusId, storyId, liker }) => {
+        setMyStatuses((prev) => {
+          const updated = prev.map((st) => {
+            if (st.id === statusId) {
+              const updatedStories = st.stories.map((story) => {
+                if (story.id === storyId) {
+                  const currentLikes = story.likes || [];
+                  const already = currentLikes.some(
+                    (l) => l.email?.toLowerCase() === liker.email?.toLowerCase() || l.userId === liker.userId
+                  );
+                  const nextLikes = already ? currentLikes : [...currentLikes, liker];
+                  return {
+                    ...story,
+                    likes: nextLikes,
+                    likesCount: nextLikes.length,
+                  };
+                }
+                return story;
+              });
+              return { ...st, stories: updatedStories };
+            }
+            return st;
+          });
+          chatService.saveMyStatusesToCache(currentUser.email, updated);
+          return updated;
+        });
+
+        setContactStatuses((prev) => {
+          const updated = prev.map((st) => {
+            if (st.id === statusId) {
+              const updatedStories = st.stories.map((story) => {
+                if (story.id === storyId) {
+                  const currentLikes = story.likes || [];
+                  const already = currentLikes.some(
+                    (l) => l.email?.toLowerCase() === liker.email?.toLowerCase() || l.userId === liker.userId
+                  );
+                  const nextLikes = already ? currentLikes : [...currentLikes, liker];
+                  return {
+                    ...story,
+                    likes: nextLikes,
+                    likesCount: nextLikes.length,
+                  };
+                }
+                return story;
+              });
+              return { ...st, stories: updatedStories };
+            }
+            return st;
+          });
+          chatService.saveContactStatusesToCache(updated);
+          return updated;
+        });
+
+        // Also live update if user is currently viewing this status
+        setViewingStatus((curr) => {
+          if (!curr || curr.id !== statusId) return curr;
+          const updatedStories = (curr.stories || []).map((story) => {
+            if (story.id === storyId) {
+              const currentLikes = story.likes || [];
+              const already = currentLikes.some(
+                (l) => l.email?.toLowerCase() === liker.email?.toLowerCase() || l.userId === liker.userId
+              );
+              const nextLikes = already ? currentLikes : [...currentLikes, liker];
+              return { ...story, likes: nextLikes, likesCount: nextLikes.length };
+            }
+            return story;
+          });
+          return { ...curr, stories: updatedStories };
+        });
+      },
+      onStatusCommentReceived: ({ statusId, storyId, comment }) => {
+        setMyStatuses((prev) => {
+          const updated = prev.map((st) => {
+            if (st.id === statusId) {
+              const updatedStories = st.stories.map((story) => {
+                if (story.id === storyId) {
+                  const currentComments = story.comments || [];
+                  const already = currentComments.some((c) => c.id === comment.id);
+                  const nextComments = already ? currentComments : [...currentComments, comment];
+                  return {
+                    ...story,
+                    comments: nextComments,
+                  };
+                }
+                return story;
+              });
+              return { ...st, stories: updatedStories };
+            }
+            return st;
+          });
+          chatService.saveMyStatusesToCache(currentUser.email, updated);
+          return updated;
+        });
+
+        setContactStatuses((prev) => {
+          const updated = prev.map((st) => {
+            if (st.id === statusId) {
+              const updatedStories = st.stories.map((story) => {
+                if (story.id === storyId) {
+                  const currentComments = story.comments || [];
+                  const already = currentComments.some((c) => c.id === comment.id);
+                  const nextComments = already ? currentComments : [...currentComments, comment];
+                  return {
+                    ...story,
+                    comments: nextComments,
+                  };
+                }
+                return story;
+              });
+              return { ...st, stories: updatedStories };
+            }
+            return st;
+          });
+          chatService.saveContactStatusesToCache(updated);
+          return updated;
+        });
+
+        // Live update if viewing status modal is open
+        setViewingStatus((curr) => {
+          if (!curr || curr.id !== statusId) return curr;
+          const updatedStories = (curr.stories || []).map((story) => {
+            if (story.id === storyId) {
+              const currentComments = story.comments || [];
+              const already = currentComments.some((c) => c.id === comment.id);
+              const nextComments = already ? currentComments : [...currentComments, comment];
+              return { ...story, comments: nextComments };
+            }
+            return story;
+          });
+          return { ...curr, stories: updatedStories };
         });
       },
       // Real-time Read Receipts: Sender receives notification that recipient opened chat
@@ -1280,25 +1413,34 @@ export default function App() {
     } catch (e) {}
   };
 
-  // Post a new real status update (persisted and broadcast live)
+  // Post a new real status update (persisted and broadcast live with accurate timestamps)
   const handlePostNewStatus = (storyItem) => {
-    const storyWithViewers = {
+    const now = Date.now();
+    const isoString = new Date(now).toISOString();
+
+    const storyWithMeta = {
       ...storyItem,
-      viewers: [],
-      likesCount: 0,
+      viewers: storyItem.viewers || [],
+      likes: storyItem.likes || [],
+      comments: storyItem.comments || [],
+      likesCount: (storyItem.likes || []).length,
+      createdAt: storyItem.createdAt || isoString,
+      timestamp: storyItem.timestamp || now,
     };
     const existingStories = myStatuses[0]?.stories || [];
-    const statusId = `status-me-${Date.now()}`;
+    const statusId = `status-me-${now}`;
     const myEmail = (currentUser.email || '').toLowerCase().trim();
+    const myHandle = (currentUser.username || currentUser.userId || myEmail.split('@')[0] || 'user').replace(/^@/, '');
 
     const updatedMyStatus = {
       id: statusId,
       userId: currentUser.id,
       userEmail: myEmail,
-      userName: currentUser.name || myEmail.split('@')[0],
+      userName: currentUser.name || myHandle,
       userAvatar: currentUser.avatar,
-      timestamp: 'Just now',
-      stories: [storyWithViewers, ...existingStories],
+      timestamp: now,
+      created_at: isoString,
+      stories: [storyWithMeta, ...existingStories],
     };
 
     const newStatuses = [updatedMyStatus];
@@ -1307,14 +1449,215 @@ export default function App() {
 
     // Broadcast live status update to other connected users
     chatService.broadcastStatus({
-      id: `status-${myEmail}-${Date.now()}`,
+      id: `status-${myEmail}-${now}`,
       userId: currentUser.id,
       userEmail: myEmail,
-      userName: currentUser.name || myEmail.split('@')[0],
+      userName: currentUser.name || myHandle,
       userAvatar: currentUser.avatar,
-      timestamp: 'Just now',
-      stories: [storyWithViewers],
+      timestamp: now,
+      created_at: isoString,
+      stories: [storyWithMeta],
     });
+  };
+
+  // Like or unlike a status story (persisted & broadcast live)
+  const handleLikeStatus = (statusId, storyId) => {
+    if (!currentUser) return;
+    const now = Date.now();
+    const myId = currentUser.id;
+    const myEmail = (currentUser.email || '').toLowerCase().trim();
+    const myHandle = (currentUser.username || currentUser.userId || myEmail.split('@')[0] || 'user').replace(/^@/, '');
+    const myName = currentUser.name || myHandle;
+    const myAvatar = currentUser.avatar || '';
+
+    const likerPayload = {
+      id: myId,
+      userId: myId,
+      email: myEmail,
+      name: myName,
+      username: myHandle,
+      avatar: myAvatar,
+      timestamp: now,
+      time: 'Just now',
+    };
+
+    // 1. Update in local myStatuses if present
+    setMyStatuses((prev) => {
+      const updated = prev.map((st) => {
+        if (st.id === statusId) {
+          const updatedStories = (st.stories || []).map((story) => {
+            if (story.id === storyId) {
+              const currentLikes = story.likes || [];
+              const already = currentLikes.some(
+                (l) => l.email?.toLowerCase() === myEmail || l.userId === myId
+              );
+              const nextLikes = already
+                ? currentLikes.filter((l) => l.email?.toLowerCase() !== myEmail && l.userId !== myId)
+                : [...currentLikes, likerPayload];
+              return {
+                ...story,
+                likes: nextLikes,
+                likesCount: nextLikes.length,
+              };
+            }
+            return story;
+          });
+          return { ...st, stories: updatedStories };
+        }
+        return st;
+      });
+      chatService.saveMyStatusesToCache(myEmail, updated);
+      return updated;
+    });
+
+    // 2. Update in contactStatuses
+    setContactStatuses((prev) => {
+      const updated = prev.map((st) => {
+        if (st.id === statusId) {
+          const updatedStories = (st.stories || []).map((story) => {
+            if (story.id === storyId) {
+              const currentLikes = story.likes || [];
+              const already = currentLikes.some(
+                (l) => l.email?.toLowerCase() === myEmail || l.userId === myId
+              );
+              const nextLikes = already
+                ? currentLikes.filter((l) => l.email?.toLowerCase() !== myEmail && l.userId !== myId)
+                : [...currentLikes, likerPayload];
+              return {
+                ...story,
+                likes: nextLikes,
+                likesCount: nextLikes.length,
+              };
+            }
+            return story;
+          });
+          return { ...st, stories: updatedStories };
+        }
+        return st;
+      });
+      chatService.saveContactStatusesToCache(updated);
+      return updated;
+    });
+
+    // 3. Update currently open viewer if matching
+    setViewingStatus((curr) => {
+      if (!curr || curr.id !== statusId) return curr;
+      const updatedStories = (curr.stories || []).map((story) => {
+        if (story.id === storyId) {
+          const currentLikes = story.likes || [];
+          const already = currentLikes.some(
+            (l) => l.email?.toLowerCase() === myEmail || l.userId === myId
+          );
+          const nextLikes = already
+            ? currentLikes.filter((l) => l.email?.toLowerCase() !== myEmail && l.userId !== myId)
+            : [...currentLikes, likerPayload];
+          return { ...story, likes: nextLikes, likesCount: nextLikes.length };
+        }
+        return story;
+      });
+      return { ...curr, stories: updatedStories };
+    });
+
+    // 4. Broadcast live like event
+    chatService.broadcastStatusLike({
+      statusId,
+      storyId,
+      liker: likerPayload,
+    });
+  };
+
+  // Comment on a status story (persisted, broadcast live & sent to chat)
+  const handleCommentStatus = (statusId, storyId, commentText, targetUserEmailOrId) => {
+    if (!currentUser || !commentText?.trim()) return;
+    const now = Date.now();
+    const myId = currentUser.id;
+    const myEmail = (currentUser.email || '').toLowerCase().trim();
+    const myHandle = (currentUser.username || currentUser.userId || myEmail.split('@')[0] || 'user').replace(/^@/, '');
+    const myName = currentUser.name || myHandle;
+    const myAvatar = currentUser.avatar || '';
+
+    const commentPayload = {
+      id: `comment-${now}-${Math.random().toString(36).slice(2, 6)}`,
+      statusId,
+      storyId,
+      userId: myId,
+      email: myEmail,
+      name: myName,
+      username: myHandle,
+      avatar: myAvatar,
+      text: commentText.trim(),
+      timestamp: now,
+      time: 'Just now',
+    };
+
+    // 1. Update in local myStatuses
+    setMyStatuses((prev) => {
+      const updated = prev.map((st) => {
+        if (st.id === statusId) {
+          const updatedStories = (st.stories || []).map((story) => {
+            if (story.id === storyId) {
+              const currentComments = story.comments || [];
+              return {
+                ...story,
+                comments: [...currentComments, commentPayload],
+              };
+            }
+            return story;
+          });
+          return { ...st, stories: updatedStories };
+        }
+        return st;
+      });
+      chatService.saveMyStatusesToCache(myEmail, updated);
+      return updated;
+    });
+
+    // 2. Update in contactStatuses
+    setContactStatuses((prev) => {
+      const updated = prev.map((st) => {
+        if (st.id === statusId) {
+          const updatedStories = (st.stories || []).map((story) => {
+            if (story.id === storyId) {
+              const currentComments = story.comments || [];
+              return {
+                ...story,
+                comments: [...currentComments, commentPayload],
+              };
+            }
+            return story;
+          });
+          return { ...st, stories: updatedStories };
+        }
+        return st;
+      });
+      chatService.saveContactStatusesToCache(updated);
+      return updated;
+    });
+
+    // 3. Update currently open viewer
+    setViewingStatus((curr) => {
+      if (!curr || curr.id !== statusId) return curr;
+      const updatedStories = (curr.stories || []).map((story) => {
+        if (story.id === storyId) {
+          const currentComments = story.comments || [];
+          return { ...story, comments: [...currentComments, commentPayload] };
+        }
+        return story;
+      });
+      return { ...curr, stories: updatedStories };
+    });
+
+    // 4. Broadcast live comment event
+    chatService.broadcastStatusComment({
+      statusId,
+      storyId,
+      comment: commentPayload,
+    });
+
+    // 5. Deliver directly into direct conversation
+    if (targetUserEmailOrId) {
+      handleReplyStatus(targetUserEmailOrId, `💬 Replied to your status: "${commentText.trim()}"`);
+    }
   };
 
   // Record viewing a story in real-time
@@ -1519,6 +1862,8 @@ export default function App() {
         currentUser={currentUser}
         onClose={() => setViewingStatus(null)}
         onReplyStatus={handleReplyStatus}
+        onLikeStatus={handleLikeStatus}
+        onCommentStatus={handleCommentStatus}
         onViewStory={handleViewStory}
       />
 

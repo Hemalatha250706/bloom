@@ -11,6 +11,7 @@ import {
   Pin,
   PinOff,
 } from 'lucide-react';
+import { formatLastSeen } from '../services/chatService.js';
 
 export default function ChatHeader({
   activeUser,
@@ -123,7 +124,9 @@ export default function ChatHeader({
                 {isOnline ? (
                   <span className="text-emerald-600 font-semibold">Online</span>
                 ) : (
-                  <span className="text-stone-400">Offline</span>
+                  <span className="text-stone-400 font-medium">
+                    {formatLastSeen(activeUser.last_seen || activeUser.lastActivity)}
+                  </span>
                 )}
                 {(activeUser.status_text || activeUser.about) && (
                   <>

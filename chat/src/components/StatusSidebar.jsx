@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Camera, ChevronDown, ChevronRight, Eye, Sparkles } from 'lucide-react';
+import { formatStatusTime } from '../services/chatService.js';
 
 export default function StatusSidebar({
   currentUser,
@@ -104,7 +105,11 @@ export default function StatusSidebar({
               My Status
             </h4>
             <div className="text-[11px] text-stone-500 truncate mt-0.5 flex items-center gap-1.5">
-              <span>{hasMyStatus ? 'Tap to view status' : 'Tap to add status update'}</span>
+              <span>
+                {hasMyStatus
+                  ? formatStatusTime(myStatuses[0]?.timestamp || myStatuses[0]?.stories?.[0]?.createdAt)
+                  : 'Tap to add status update'}
+              </span>
               {hasMyStatus && (
                 <span className="text-[10px] text-violet-700 font-bold flex items-center gap-0.5 bg-violet-100 px-1.5 py-0.5 rounded-full">
                   <Eye className="w-2.5 h-2.5 text-violet-600" />
@@ -150,7 +155,7 @@ export default function StatusSidebar({
                         {st.userName}
                       </h4>
                       <span className="text-[10px] text-stone-400 font-medium ml-1">
-                        {st.timestamp || 'Recent'}
+                        {formatStatusTime(st.timestamp || st.stories?.[0]?.createdAt || st.stories?.[0]?.timestamp)}
                       </span>
                     </div>
                     <p className="text-[11px] text-stone-500 truncate mt-0.5">
@@ -212,7 +217,7 @@ export default function StatusSidebar({
                           {st.userName}
                         </h4>
                         <span className="text-[10px] text-stone-400 font-medium ml-1">
-                          {st.timestamp || 'Viewed'}
+                          {formatStatusTime(st.timestamp || st.stories?.[0]?.createdAt || st.stories?.[0]?.timestamp)}
                         </span>
                       </div>
                       <p className="text-[11px] text-stone-400 truncate mt-0.5">

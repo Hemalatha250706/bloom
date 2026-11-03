@@ -47,21 +47,32 @@ export default function CreateStatusModal({ isOpen, onClose, onPostStatus, onOpe
     if (tab === 'photo' && !photoUrl) return;
     if (tab === 'text' && !textContent.trim()) return;
 
+    const now = Date.now();
+    const isoString = new Date(now).toISOString();
+
     const newStory =
       tab === 'photo'
         ? {
-            id: `story-${Date.now()}`,
+            id: `story-${now}`,
             type: 'image',
             url: photoUrl,
             caption: caption.trim(),
-            createdAt: 'Just now',
+            createdAt: isoString,
+            timestamp: now,
+            likes: [],
+            comments: [],
+            viewers: [],
           }
         : {
-            id: `story-${Date.now()}`,
+            id: `story-${now}`,
             type: 'text',
             text: textContent.trim(),
             background: selectedGradient,
-            createdAt: 'Just now',
+            createdAt: isoString,
+            timestamp: now,
+            likes: [],
+            comments: [],
+            viewers: [],
           };
 
     onPostStatus(newStory);

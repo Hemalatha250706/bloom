@@ -54,6 +54,70 @@ export function formatDateLabel(dateObj) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
+/**
+ * Formats a timestamp into an accurate status time description (e.g. 'Just now', '5m ago', 'Today at 10:30 AM')
+ */
+export function formatStatusTime(timeVal) {
+  if (!timeVal) return 'Just now';
+  const d = typeof timeVal === 'number' ? new Date(timeVal) : new Date(timeVal);
+  if (isNaN(d.getTime())) return String(timeVal);
+
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  if (diffMs < 0) return 'Just now';
+  const diffMins = Math.floor(diffMs / (1000 * 60));
+
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+
+  const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  if (d.toDateString() === now.toDateString()) {
+    return `Today at ${timeStr}`;
+  }
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) {
+    return `Yesterday at ${timeStr}`;
+  }
+
+  const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return `${dateStr} at ${timeStr}`;
+}
+
+/**
+ * Formats last seen timestamp for user presence in chat header (e.g. 'Last seen today at 11:20 AM', 'Last seen 5m ago')
+ */
+export function formatLastSeen(lastSeenVal) {
+  if (!lastSeenVal) return 'Offline';
+  const d = typeof lastSeenVal === 'number' ? new Date(lastSeenVal) : new Date(lastSeenVal);
+  if (isNaN(d.getTime())) return 'Offline';
+
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  if (diffMs < 0) return 'Last seen just now';
+  const diffMins = Math.floor(diffMs / (1000 * 60));
+
+  if (diffMins < 1) return 'Last seen just now';
+  if (diffMins < 60) return `Last seen ${diffMins}m ago`;
+
+  const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  if (d.toDateString() === now.toDateString()) {
+    return `Last seen today at ${timeStr}`;
+  }
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) {
+    return `Last seen yesterday at ${timeStr}`;
+  }
+
+  const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return `Last seen ${dateStr} at ${timeStr}`;
+}
+
 export function cleanPhoneNumber(phone) {
   if (!phone) return '';
   return phone.replace(/[^\d+]/g, '');
@@ -1047,6 +1111,8 @@ export const chatService = {
     onMessageReceived,
     onStatusReceived,
     onStatusViewReceived,
+    onStatusLikeReceived,
+    onStatusCommentReceived,
     onMessagesRead,
     onMessageReaction,
     onUserStatusUpdated,
@@ -1186,6 +1252,20 @@ export const chatService = {
           onStatusViewReceived(payload);
         }
       })
+      // Status Like Broadcast
+      .on('broadcast', { event: 'bloom_status_like' }, ({ payload }) => {
+        if (!payload) return;
+        if (typeof onStatusLikeReceived === 'function') {
+          onStatusLikeReceived(payload);
+        }
+      })
+      // Status Comment Broadcast
+      .on('broadcast', { event: 'bloom_status_comment' }, ({ payload }) => {
+        if (!payload) return;
+        if (typeof onStatusCommentReceived === 'function') {
+          onStatusCommentReceived(payload);
+        }
+      })
       // Read Receipts Broadcast (turns ticks blue)
       .on('broadcast', { event: 'messages_read' }, ({ payload }) => {
         if (!payload) return;
@@ -1290,6 +1370,34 @@ export const chatService = {
         });
       } catch (err) {
         console.warn('Broadcast status view notice:', err);
+      }
+    }
+  },
+
+  async broadcastStatusLike(likePayload) {
+    if (globalRealtimeChannel) {
+      try {
+        await globalRealtimeChannel.send({
+          type: 'broadcast',
+          event: 'bloom_status_like',
+          payload: likePayload,
+        });
+      } catch (err) {
+        console.warn('Broadcast status like notice:', err);
+      }
+    }
+  },
+
+  async broadcastStatusComment(commentPayload) {
+    if (globalRealtimeChannel) {
+      try {
+        await globalRealtimeChannel.send({
+          type: 'broadcast',
+          event: 'bloom_status_comment',
+          payload: commentPayload,
+        });
+      } catch (err) {
+        console.warn('Broadcast status comment notice:', err);
       }
     }
   },
